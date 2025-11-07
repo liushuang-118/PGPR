@@ -38,7 +38,7 @@ def train(args):
 
             # Get training batch.
             batch_idxs = dataloader.get_batch()
-            batch_idxs = torch.from_numpy(batch_idxs).to(args.device)
+            batch_idxs = torch.from_numpy(batch_idxs).long().to(args.device)
 
             # Train model.
             optimizer.zero_grad()
