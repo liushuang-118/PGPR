@@ -2,7 +2,7 @@ certifi
 cycler
 easydict
 kiwisolver
-matplotlib==3.3.4
+matplotlib==3.8.4
 numpy==1.19.5
 pandas==1.1.5
 Pillow==8.4.0
