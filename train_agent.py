@@ -44,7 +44,11 @@ class ActorCritic(nn.Module):
         x = F.dropout(F.elu(out), p=0.5)
 
         actor_logits = self.actor(x)
-        actor_logits[1 - act_mask] = -999999.0
+
+        # actor_logits[1 - act_mask] = -999999.0
+        act_mask = act_mask.bool()
+        actor_logits[~act_mask] = -999999.0 
+
         act_probs = F.softmax(actor_logits, dim=-1)  # Tensor of [bs, act_dim]
 
         state_values = self.critic(x)  # Tensor of [bs, 1]
@@ -52,7 +56,9 @@ class ActorCritic(nn.Module):
 
     def select_action(self, batch_state, batch_act_mask, device):
         state = torch.FloatTensor(batch_state).to(device)  # Tensor [bs, state_dim]
-        act_mask = torch.ByteTensor(batch_act_mask).to(device)  # Tensor of [bs, act_dim]
+        
+        # act_mask = torch.ByteTensor(batch_act_mask).to(device)  # Tensor of [bs, act_dim]
+        act_mask = torch.tensor(batch_act_mask, dtype=torch.bool).to(device)
 
         probs, value = self((state, act_mask))  # act_probs: [bs, act_dim], state_value: [bs, 1]
         m = Categorical(probs)
