@@ -9,6 +9,13 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
+if not hasattr(np, 'float'):
+    np.float = float
+if not hasattr(np, 'int'):
+    np.int = int
+if not hasattr(np, 'bool'):
+    np.bool = bool
+
 from utils import *
 from data_utils import AmazonDataset, AmazonDataLoader
 from transe_model import KnowledgeEmbedding
