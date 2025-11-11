@@ -19,27 +19,32 @@ print(f"[INFO] 已加载 {len(data['paths'])} 条 reasoning paths")
 
 # ===== 2️⃣ 提取每个用户的 Su 和推荐产品集合 =====
 user_explanations = defaultdict(set)  # Su
-user_products = defaultdict(set)      # 推荐产品集合
+user_products = defaultdict(list)     # 推荐产品集合，保留顺序和概率
 
-for path in data['paths']:
+for path, probs in zip(data['paths'], data['probs']):
     user_id = None
     last_product_id = None
     words = set()
+    path_prob = np.prod(probs)  # 可以用路径概率的乘积或平均作为该路径的综合概率
 
     for rel, ent_type, ent_id in path:
         if ent_type == 'user' and user_id is None:
             user_id = ent_id
         elif ent_type == 'product':
-            last_product_id = ent_id  # 每次遇到 product 都更新，最终就是最后一个
+            last_product_id = ent_id
         elif ent_type == 'word':
             words.add(ent_id)
 
     if user_id is not None:
         user_explanations[user_id].update(words)
         if last_product_id is not None:
-            user_products[user_id].add(last_product_id)
+            user_products[user_id].append((last_product_id, path_prob))
 
-print(f"[INFO] 提取了 {len(user_explanations)} 个用户的 Su 和推荐产品集合")
+# 对每个用户按概率排序，取 top-10 产品
+for uid in user_products:
+    sorted_products = sorted(user_products[uid], key=lambda x: x[1], reverse=True)
+    top_products = [pid for pid, _ in sorted_products[:10]]
+    user_products[uid] = top_products
 
 # ===== 3️⃣ 加载真实评论数据 =====
 dataset = AmazonDataset(DATA_DIR, set_name='train')
