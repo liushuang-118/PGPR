@@ -148,31 +148,27 @@ def train(args):
         dataloader.reset()
         while dataloader.has_next():
             batch_uids = dataloader.get_batch()
-            batch_state = env.reset(batch_uids)
-            done = False
 
-            # 每个用户的路径列表
-            batch_paths = {uid: [] for uid in batch_uids}
-
-            while not done:
-                batch_act_mask = env.batch_action_mask(dropout=args.act_dropout)
-                batch_act_idx = model.select_action(batch_state, batch_act_mask, args.device)
-
-                # ---- 修改 batch_step 以返回当前完整路径 ---- #
-                batch_state, batch_reward, done = env.batch_step(batch_act_idx)
-                model.rewards.append(batch_reward)
-
-                # 保存路径的快照，防止重复引用
-                for i, uid in enumerate(batch_uids):
-                    batch_paths[uid].append(copy.deepcopy(env._batch_path[i]))
-
-            # 合并 batch_paths 到 all_paths
-            for uid in batch_paths:
+            # ---------------- 多次采样，每个用户多条完整路径 ---------------- #
+            for uid in batch_uids:
                 if uid not in all_paths:
                     all_paths[uid] = []
-                all_paths[uid].extend(batch_paths[uid])
 
-            # 学习更新
+                # 你可以根据 max_path_len 或采样次数生成多条路径
+                num_samples = args.num_path_samples if hasattr(args, 'num_path_samples') else 3
+                for _ in range(num_samples):
+                    state = env.reset([uid])  # 单用户 reset
+                    done = False
+                    while not done:
+                        act_mask = env.batch_action_mask(dropout=args.act_dropout)
+                        act_idx = model.select_action(state, act_mask, args.device)
+                        state, reward, done = env.batch_step(act_idx)
+                        model.rewards.append(reward)
+
+                    # episode 完成，保存完整路径
+                    all_paths[uid].append(copy.deepcopy(env._batch_path[0]))
+
+            # ---------------- 学习更新 ---------------- #
             lr = args.lr * max(1e-4, 1.0 - float(step) / (args.epochs * len(uids) / args.batch_size))
             for pg in optimizer.param_groups:
                 pg['lr'] = lr
@@ -185,12 +181,11 @@ def train(args):
             total_entropy.append(eloss)
             step += 1
 
-        # 保存模型
+        # ---------------- 保存模型和路径 ---------------- #
         policy_file = '{}/policy_model_epoch_{}.ckpt'.format(args.log_dir, epoch)
         torch.save(model.state_dict(), policy_file)
         logger.info("Saved model to " + policy_file)
 
-        # 修正路径文件名拼写
         paths_file = '{}/training_paths_epoch_{}.pkl'.format(args.log_dir, epoch)
         with open(paths_file, 'wb') as f:
             pickle.dump(all_paths, f)
