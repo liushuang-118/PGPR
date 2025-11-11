@@ -1,100 +1,126 @@
 import os
 import gzip
 import pickle
-from collections import defaultdict
-from sklearn.feature_extraction.text import TfidfVectorizer
+from collections import defaultdict, Counter
 import numpy as np
 from tqdm import tqdm
-from itertools import islice
+from sklearn.feature_extraction.text import TfidfVectorizer
 from data_utils import AmazonDataset
+from itertools import islice
 
 # ===== 配置路径 =====
-DATA_DIR = './data/Amazon_Beauty'  # 数据集目录
-REVIEW_FILE = os.path.join(DATA_DIR, 'train.txt.gz')  # 评论文件
-PATH_FILE = './tmp/Amazon_Beauty/train_agent/policy_paths_epoch1.pkl'  # reasoning paths
+DATA_DIR = './data/Amazon_Beauty'
+PATH_FILE = './tmp/Amazon_Beauty/train_agent/policy_paths_epoch1.pkl'
 
 # ===== 1️⃣ 加载 reasoning paths =====
 with open(PATH_FILE, 'rb') as f:
     data = pickle.load(f)
 print(f"[INFO] 已加载 {len(data['paths'])} 条 reasoning paths")
 
-# 提取所有用户ID（path的第一个节点）
-all_user_ids = [path[0][2] for path in data['paths']]
+# ===== 2️⃣ 提取每个用户的 Su 和推荐产品集合 =====
+user_explanations = defaultdict(set)  # Su
+user_products = defaultdict(set)      # 推荐产品集合
 
-# 不同用户数量
-unique_user_ids = set(all_user_ids)
-print(f"reasoning paths 中共有 {len(unique_user_ids)} 个不同用户")
-
-# ===== 2️⃣ 加载用户映射文件 =====
-USER_FILE = os.path.join(DATA_DIR, 'users.txt.gz')
-user2id, id2user = {}, {}
-with gzip.open(USER_FILE, 'rt') as f:
-    for i, line in enumerate(f):
-        uid = line.strip()
-        user2id[uid] = i
-        id2user[i] = uid
-print(f"[INFO] 成功加载 {len(user2id)} 个用户 ID 映射")
-
-# # ===== 3️⃣ 提取每个用户的 Su（路径中的 word） =====
-user_explanations = defaultdict(set)
 for path in data['paths']:
-    # 第一个节点是用户
-    user_int_id = path[0][2]
-    # 直接用 int ID 作为 key，不映射到 id2user，避免丢失
+    user_id = None
+    last_product_id = None
+    words = set()
+
     for rel, ent_type, ent_id in path:
-        if ent_type == 'word':
-            user_explanations[user_int_id].add(ent_id)  # 保留整数
+        if ent_type == 'user' and user_id is None:
+            user_id = ent_id
+        elif ent_type == 'product':
+            last_product_id = ent_id  # 每次遇到 product 都更新，最终就是最后一个
+        elif ent_type == 'word':
+            words.add(ent_id)
 
-# # ===== 4️⃣ 从 train.txt.gz 构建每个用户的评论文本 =====
+    if user_id is not None:
+        user_explanations[user_id].update(words)
+        if last_product_id is not None:
+            user_products[user_id].add(last_product_id)
+
+print(f"[INFO] 提取了 {len(user_explanations)} 个用户的 Su 和推荐产品集合")
+
+# ===== 3️⃣ 加载真实评论数据 =====
 dataset = AmazonDataset(DATA_DIR, set_name='train')
-user_groundtruth = defaultdict(set)  # Gu
+print(f"[INFO] 数据集中共有 {len(dataset.review.data)} 条评论")
+
+# ===== 4️⃣ 构建 Gu（用户对推荐产品的真实评论词集合） =====
+user_groundtruth = defaultdict(set)
+
 for user_idx, product_idx, word_indices in dataset.review.data:
-    user_groundtruth[user_idx].update(word_indices)
+    if product_idx in user_products[user_idx]:
+        user_groundtruth[user_idx].update(word_indices)
 
-print(f"[INFO] 构建了 {len(user_groundtruth)} 个用户的真实评论词集合")
+print(f"[INFO] 构建了 {len(user_groundtruth)} 个用户的 Gu（初始真实评论词集合）")
 
-# 5️⃣ 构建用户评论文本列表（词 ID 转词）
-user_texts = {}
-for user_idx, word_indices in user_groundtruth.items():
-    # dataset.word.vocab 是索引 -> 词表
-    words = [dataset.word.vocab[wid] for wid in word_indices]
-    user_texts[user_idx] = words
+# ===== 5️⃣ 统计全局词频 =====
+all_word_indices = [wid for words in user_groundtruth.values() for wid in words]
+word_freq = Counter(all_word_indices)
 
-# 5️⃣ 计算 TF-IDF 并取 top-k 词作为 Gu
-top_k = 10
-vectorizer = TfidfVectorizer(tokenizer=lambda x: x, lowercase=False)
-texts = [v for v in user_texts.values()]
-tfidf_matrix = vectorizer.fit_transform(texts)
+# ===== 6️⃣ 计算 TF-IDF =====
+user_texts = []
+user_ids = []
+for uid, word_indices in user_groundtruth.items():
+    words = [dataset.word.vocab[w] for w in word_indices]
+    user_texts.append(" ".join(words))
+    user_ids.append(uid)
+
+vectorizer = TfidfVectorizer(token_pattern=r"(?u)\b\w+\b")
+tfidf_matrix = vectorizer.fit_transform(user_texts)
 feature_names = np.array(vectorizer.get_feature_names_out())
+avg_tfidf = np.asarray(tfidf_matrix.mean(axis=0)).ravel()
+word2tfidf = dict(zip(feature_names, avg_tfidf))
 
-user_gu = {}  # Gu
-for i, (user_idx, _) in enumerate(user_texts.items()):
-    row = tfidf_matrix[i].toarray()[0]
-    top_idx = np.argsort(row)[-top_k:]  # 取 top_k
-    user_gu[user_idx] = set(feature_names[top_idx])
+# ===== 7️⃣ 过滤高频低TF-IDF词 =====
+filtered_words = set()
+for wid, freq in word_freq.items():
+    if freq > 5000:
+        word = dataset.word.vocab[wid]
+        tfidf_val = word2tfidf.get(word, 0)
+        if tfidf_val < 0.1:
+            filtered_words.add(wid)
 
-print(f"[INFO] 已生成 {len(user_gu)} 个用户的 Gu（TF-IDF top-{top_k}）")
+# ===== 8️⃣ 更新 Gu =====
+for uid in user_groundtruth:
+    user_groundtruth[uid] = {w for w in user_groundtruth[uid] if w not in filtered_words}
 
-# ===== 6️⃣ 计算 Precision / Recall / F1 =====
-precisions = []
-recalls = []
-f1s = []
+print(f"[INFO] 过滤高频低TF-IDF词后，Gu 更新完成")
 
-for uid in user_explanations:
+# ===== 9️⃣ 计算 Precision / Recall / F1 =====
+precisions, recalls, f1s = [], [], []
+printed = 0 
+
+for uid in tqdm(user_explanations.keys(), desc="Evaluating"):
     Su = user_explanations[uid]
     Gu = user_groundtruth.get(uid, set())
-    if not Gu or not Su:
-        continue  # 忽略没有数据的用户
+
+    if not Su or not Gu:
+        continue
 
     inter = Su & Gu
-    precision = len(inter) / (len(Su) + 1)  # +1 避免除零
+    precision = len(inter) / (len(Su) + 1)
     recall = len(inter) / (len(Gu) + 1)
-    f1 = 2 * precision * recall / (precision + recall + 1e-8)  # 避免除零
+    f1 = 2 * precision * recall / (precision + recall + 1)
 
     precisions.append(precision)
     recalls.append(recall)
     f1s.append(f1)
 
-print(f"平均 Precision: {np.mean(precisions):.4f}")
-print(f"平均 Recall:    {np.mean(recalls):.4f}")
-print(f"平均 F1:        {np.mean(f1s):.4f}")
+    if printed < 2:
+        su_words = [dataset.word.vocab[w] for w in Su]
+        gu_words = [dataset.word.vocab[w] for w in Gu]
+        inter_words = [dataset.word.vocab[w] for w in inter]
+        print(f"\n用户 {uid}:")
+        print(f"  Su (预测词): {su_words[:10]}... 总数 {len(Su)}")
+        print(f"  Gu (真实词): {gu_words[:10]}... 总数 {len(Gu)}")
+        print(f"  交集: {inter_words[:10]}... 总数 {len(inter)}")
+        printed += 1
+
+if precisions:
+    print("\n===== Evaluation Results =====")
+    print(f"平均 Precision: {np.mean(precisions):.4f}")
+    print(f"平均 Recall:    {np.mean(recalls):.4f}")
+    print(f"平均 F1:        {np.mean(f1s):.4f}")
+else:
+    print("[WARN] 没有匹配的用户用于计算。")
