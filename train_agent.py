@@ -11,6 +11,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torch.distributions import Categorical
+import copy  # <-- 新增
 
 from knowledge_graph import KnowledgeGraph
 from kg_env import BatchKGEnvironment
@@ -39,14 +40,14 @@ class ActorCritic(nn.Module):
 
     def forward(self, inputs):
         state, act_mask = inputs
-        x = self.l1(state)
-        x = F.dropout(F.elu(x), p=0.5)
-        x = self.l2(x)
-        x = F.dropout(F.elu(x), p=0.5)
+        x = F.elu(self.l1(state))
+        x = F.dropout(x, p=0.5)
+        x = F.elu(self.l2(x))
+        x = F.dropout(x, p=0.5)
 
         actor_logits = self.actor(x)
         act_mask = act_mask.bool()
-        actor_logits[~act_mask] = -999999.0
+        actor_logits[~act_mask] = -1e9
         act_probs = F.softmax(actor_logits, dim=-1)
         state_values = self.critic(x)
         return act_probs, state_values
@@ -57,6 +58,7 @@ class ActorCritic(nn.Module):
         probs, value = self((state, act_mask))
         m = Categorical(probs)
         acts = m.sample()
+        # 确保选择有效动作
         valid_idx = act_mask.gather(1, acts.view(-1, 1)).view(-1)
         acts[valid_idx == 0] = 0
 
@@ -65,7 +67,7 @@ class ActorCritic(nn.Module):
         return acts.cpu().numpy().tolist()
 
     def update(self, optimizer, device, ent_weight):
-        if len(self.rewards) <= 0:
+        if len(self.rewards) == 0:
             del self.rewards[:]
             del self.saved_actions[:]
             del self.entropy[:]
@@ -98,6 +100,7 @@ class ActorCritic(nn.Module):
         del self.entropy[:]
         return loss.item(), actor_loss.item(), critic_loss.item(), entropy_loss.item()
 
+
 # ---------------- DataLoader ---------------- #
 class ACDataLoader(object):
     def __init__(self, uids, batch_size):
@@ -120,9 +123,10 @@ class ACDataLoader(object):
         end_idx = min(self._start_idx + self.batch_size, self.num_users)
         batch_idx = self._rand_perm[self._start_idx:end_idx]
         batch_uids = self.uids[batch_idx]
-        self._has_next = self._has_next and end_idx < self.num_users
+        self._has_next = end_idx < self.num_users
         self._start_idx = end_idx
         return batch_uids.tolist()
+
 
 # ---------------- Training ---------------- #
 def train(args):
@@ -137,7 +141,7 @@ def train(args):
     step = 0
     model.train()
 
-    # 新增: 保存训练时生成的路径
+    # ---------------- 保存训练路径 ---------------- #
     all_paths = {}  # {uid: [path1, path2, ...]}
 
     for epoch in range(1, args.epochs + 1):
@@ -146,20 +150,22 @@ def train(args):
             batch_uids = dataloader.get_batch()
             batch_state = env.reset(batch_uids)
             done = False
-            batch_paths = {uid: [] for uid in batch_uids}  # 存储每个用户当前 batch 的路径
+
+            # 每个用户的路径列表
+            batch_paths = {uid: [] for uid in batch_uids}
 
             while not done:
                 batch_act_mask = env.batch_action_mask(dropout=args.act_dropout)
                 batch_act_idx = model.select_action(batch_state, batch_act_mask, args.device)
-                
-                # 修改 env.batch_step，使其返回路径信息
-                batch_state, batch_reward, done, batch_next_nodes = env.batch_step(batch_act_idx, return_path=True)
+
+                # ---- 修改 batch_step 以返回当前完整路径 ---- #
+                batch_state, batch_reward, done = env.batch_step(batch_act_idx)
                 model.rewards.append(batch_reward)
 
-                # 保存路径
+                # 保存路径的快照，防止重复引用
                 for i, uid in enumerate(batch_uids):
-                    batch_paths[uid].append(batch_next_nodes[i])
-            
+                    batch_paths[uid].append(copy.deepcopy(env._batch_path[i]))
+
             # 合并 batch_paths 到 all_paths
             for uid in batch_paths:
                 if uid not in all_paths:
@@ -184,11 +190,12 @@ def train(args):
         torch.save(model.state_dict(), policy_file)
         logger.info("Saved model to " + policy_file)
 
-        # 保存路径到文件
-        paths_file = '{}/trainng_paths_epoch_{}.pkl'.format(args.log_dir, epoch)
+        # 修正路径文件名拼写
+        paths_file = '{}/training_paths_epoch_{}.pkl'.format(args.log_dir, epoch)
         with open(paths_file, 'wb') as f:
             pickle.dump(all_paths, f)
         logger.info(f"Saved paths to {paths_file}")
+
 
 # ---------------- Main ---------------- #
 def main():
@@ -206,7 +213,7 @@ def main():
     parser.add_argument('--ent_weight', type=float, default=1e-3, help='weight factor for entropy loss')
     parser.add_argument('--act_dropout', type=float, default=0.5, help='action dropout rate.')
     parser.add_argument('--state_history', type=int, default=1, help='state history length')
-    parser.add_argument('--hidden', type=int, nargs='*', default=[512, 256], help='number of samples')
+    parser.add_argument('--hidden', type=int, nargs='*', default=[512, 256], help='number of hidden units')
     args = parser.parse_args()
 
     os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
