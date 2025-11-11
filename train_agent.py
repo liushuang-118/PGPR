@@ -3,12 +3,13 @@ from __future__ import absolute_import, division, print_function
 import sys
 import os
 import argparse
+import pickle
+import numpy as np
 from collections import namedtuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from torch.autograd import Variable
 from torch.distributions import Categorical
 
 from knowledge_graph import KnowledgeGraph
@@ -19,7 +20,7 @@ logger = None
 
 SavedAction = namedtuple('SavedAction', ['log_prob', 'value'])
 
-
+# ---------------- Actor-Critic ---------------- #
 class ActorCritic(nn.Module):
     def __init__(self, state_dim, act_dim, gamma=0.99, hidden_sizes=[512, 256]):
         super(ActorCritic, self).__init__()
@@ -37,33 +38,25 @@ class ActorCritic(nn.Module):
         self.entropy = []
 
     def forward(self, inputs):
-        state, act_mask = inputs  # state: [bs, state_dim], act_mask: [bs, act_dim]
+        state, act_mask = inputs
         x = self.l1(state)
         x = F.dropout(F.elu(x), p=0.5)
-        out = self.l2(x)
-        x = F.dropout(F.elu(out), p=0.5)
+        x = self.l2(x)
+        x = F.dropout(F.elu(x), p=0.5)
 
         actor_logits = self.actor(x)
-
-        # actor_logits[1 - act_mask] = -999999.0
         act_mask = act_mask.bool()
-        actor_logits[~act_mask] = -999999.0 
-
-        act_probs = F.softmax(actor_logits, dim=-1)  # Tensor of [bs, act_dim]
-
-        state_values = self.critic(x)  # Tensor of [bs, 1]
+        actor_logits[~act_mask] = -999999.0
+        act_probs = F.softmax(actor_logits, dim=-1)
+        state_values = self.critic(x)
         return act_probs, state_values
 
     def select_action(self, batch_state, batch_act_mask, device):
-        state = torch.FloatTensor(batch_state).to(device)  # Tensor [bs, state_dim]
-        
-        # act_mask = torch.ByteTensor(batch_act_mask).to(device)  # Tensor of [bs, act_dim]
+        state = torch.FloatTensor(batch_state).to(device)
         act_mask = torch.tensor(batch_act_mask, dtype=torch.bool).to(device)
-
-        probs, value = self((state, act_mask))  # act_probs: [bs, act_dim], state_value: [bs, 1]
+        probs, value = self((state, act_mask))
         m = Categorical(probs)
-        acts = m.sample()  # Tensor of [bs, ], requires_grad=False
-        # [CAVEAT] If sampled action is out of action_space, choose the first action in action_space.
+        acts = m.sample()
         valid_idx = act_mask.gather(1, acts.view(-1, 1)).view(-1)
         acts[valid_idx == 0] = 0
 
@@ -76,9 +69,9 @@ class ActorCritic(nn.Module):
             del self.rewards[:]
             del self.saved_actions[:]
             del self.entropy[:]
-            return 0.0, 0.0, 0.0
+            return 0.0, 0.0, 0.0, 0.0
 
-        batch_rewards = np.vstack(self.rewards).T  # numpy array of [bs, #steps]
+        batch_rewards = np.vstack(self.rewards).T
         batch_rewards = torch.FloatTensor(batch_rewards).to(device)
         num_steps = batch_rewards.shape[1]
         for i in range(1, num_steps):
@@ -87,12 +80,12 @@ class ActorCritic(nn.Module):
         actor_loss = 0
         critic_loss = 0
         entropy_loss = 0
-        for i in range(0, num_steps):
-            log_prob, value = self.saved_actions[i]  # log_prob: Tensor of [bs, ], value: Tensor of [bs, 1]
-            advantage = batch_rewards[:, i] - value.squeeze(1)  # Tensor of [bs, ]
-            actor_loss += -log_prob * advantage.detach()  # Tensor of [bs, ]
-            critic_loss += advantage.pow(2)  # Tensor of [bs, ]
-            entropy_loss += -self.entropy[i]  # Tensor of [bs, ]
+        for i in range(num_steps):
+            log_prob, value = self.saved_actions[i]
+            advantage = batch_rewards[:, i] - value.squeeze(1)
+            actor_loss += -log_prob * advantage.detach()
+            critic_loss += advantage.pow(2)
+            entropy_loss += -self.entropy[i]
         actor_loss = actor_loss.mean()
         critic_loss = critic_loss.mean()
         entropy_loss = entropy_loss.mean()
@@ -103,10 +96,9 @@ class ActorCritic(nn.Module):
         del self.rewards[:]
         del self.saved_actions[:]
         del self.entropy[:]
-
         return loss.item(), actor_loss.item(), critic_loss.item(), entropy_loss.item()
 
-
+# ---------------- DataLoader ---------------- #
 class ACDataLoader(object):
     def __init__(self, uids, batch_size):
         self.uids = np.array(uids)
@@ -125,7 +117,6 @@ class ACDataLoader(object):
     def get_batch(self):
         if not self._has_next:
             return None
-        # Multiple users per batch
         end_idx = min(self._start_idx + self.batch_size, self.num_users)
         batch_idx = self._rand_perm[self._start_idx:end_idx]
         batch_uids = self.uids[batch_idx]
@@ -133,7 +124,7 @@ class ACDataLoader(object):
         self._start_idx = end_idx
         return batch_uids.tolist()
 
-
+# ---------------- Training ---------------- #
 def train(args):
     env = BatchKGEnvironment(args.dataset, args.max_acts, max_path_len=args.max_path_len, state_history=args.state_history)
     uids = list(env.kg(USER).keys())
@@ -145,26 +136,41 @@ def train(args):
     total_losses, total_plosses, total_vlosses, total_entropy, total_rewards = [], [], [], [], []
     step = 0
     model.train()
+
+    # 新增: 保存训练时生成的路径
+    all_paths = {}  # {uid: [path1, path2, ...]}
+
     for epoch in range(1, args.epochs + 1):
-        ### Start epoch ###
         dataloader.reset()
         while dataloader.has_next():
             batch_uids = dataloader.get_batch()
-            ### Start batch episodes ###
-            batch_state = env.reset(batch_uids)  # numpy array of [bs, state_dim]
+            batch_state = env.reset(batch_uids)
             done = False
-            while not done:
-                batch_act_mask = env.batch_action_mask(dropout=args.act_dropout)  # numpy array of size [bs, act_dim]
-                batch_act_idx = model.select_action(batch_state, batch_act_mask, args.device)  # int
-                batch_state, batch_reward, done = env.batch_step(batch_act_idx)
-                model.rewards.append(batch_reward)
-            ### End of episodes ###
+            batch_paths = {uid: [] for uid in batch_uids}  # 存储每个用户当前 batch 的路径
 
+            while not done:
+                batch_act_mask = env.batch_action_mask(dropout=args.act_dropout)
+                batch_act_idx = model.select_action(batch_state, batch_act_mask, args.device)
+                
+                # 修改 env.batch_step，使其返回路径信息
+                batch_state, batch_reward, done, batch_next_nodes = env.batch_step(batch_act_idx, return_path=True)
+                model.rewards.append(batch_reward)
+
+                # 保存路径
+                for i, uid in enumerate(batch_uids):
+                    batch_paths[uid].append(batch_next_nodes[i])
+            
+            # 合并 batch_paths 到 all_paths
+            for uid in batch_paths:
+                if uid not in all_paths:
+                    all_paths[uid] = []
+                all_paths[uid].extend(batch_paths[uid])
+
+            # 学习更新
             lr = args.lr * max(1e-4, 1.0 - float(step) / (args.epochs * len(uids) / args.batch_size))
             for pg in optimizer.param_groups:
                 pg['lr'] = lr
 
-            # Update policy
             total_rewards.append(np.sum(model.rewards))
             loss, ploss, vloss, eloss = model.update(optimizer, args.device, args.ent_weight)
             total_losses.append(loss)
@@ -173,28 +179,18 @@ def train(args):
             total_entropy.append(eloss)
             step += 1
 
-            # Report performance
-            if step > 0 and step % 100 == 0:
-                avg_reward = np.mean(total_rewards) / args.batch_size
-                avg_loss = np.mean(total_losses)
-                avg_ploss = np.mean(total_plosses)
-                avg_vloss = np.mean(total_vlosses)
-                avg_entropy = np.mean(total_entropy)
-                total_losses, total_plosses, total_vlosses, total_entropy, total_rewards = [], [], [], [], []
-                logger.info(
-                        'epoch/step={:d}/{:d}'.format(epoch, step) +
-                        ' | loss={:.5f}'.format(avg_loss) +
-                        ' | ploss={:.5f}'.format(avg_ploss) +
-                        ' | vloss={:.5f}'.format(avg_vloss) +
-                        ' | entropy={:.5f}'.format(avg_entropy) +
-                        ' | reward={:.5f}'.format(avg_reward))
-        ### END of epoch ###
-
+        # 保存模型
         policy_file = '{}/policy_model_epoch_{}.ckpt'.format(args.log_dir, epoch)
-        logger.info("Save model to " + policy_file)
         torch.save(model.state_dict(), policy_file)
+        logger.info("Saved model to " + policy_file)
 
+        # 保存路径到文件
+        paths_file = '{}/trainng_paths_epoch_{}.pkl'.format(args.log_dir, epoch)
+        with open(paths_file, 'wb') as f:
+            pickle.dump(all_paths, f)
+        logger.info(f"Saved paths to {paths_file}")
 
+# ---------------- Main ---------------- #
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset', type=str, default=BEAUTY, help='One of {clothing, cell, beauty, cd}')
@@ -230,4 +226,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
