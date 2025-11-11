@@ -11,14 +11,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torch.distributions import Categorical
-import copy  # <-- 新增
+import copy
 
 from knowledge_graph import KnowledgeGraph
 from kg_env import BatchKGEnvironment
 from utils import *
 
 logger = None
-
 SavedAction = namedtuple('SavedAction', ['log_prob', 'value'])
 
 # ---------------- Actor-Critic ---------------- #
@@ -58,7 +57,6 @@ class ActorCritic(nn.Module):
         probs, value = self((state, act_mask))
         m = Categorical(probs)
         acts = m.sample()
-        # 确保选择有效动作
         valid_idx = act_mask.gather(1, acts.view(-1, 1)).view(-1)
         acts[valid_idx == 0] = 0
 
@@ -100,7 +98,6 @@ class ActorCritic(nn.Module):
         del self.entropy[:]
         return loss.item(), actor_loss.item(), critic_loss.item(), entropy_loss.item()
 
-
 # ---------------- DataLoader ---------------- #
 class ACDataLoader(object):
     def __init__(self, uids, batch_size):
@@ -127,7 +124,6 @@ class ACDataLoader(object):
         self._start_idx = end_idx
         return batch_uids.tolist()
 
-
 # ---------------- Training ---------------- #
 def train(args):
     env = BatchKGEnvironment(args.dataset, args.max_acts, max_path_len=args.max_path_len, state_history=args.state_history)
@@ -141,7 +137,6 @@ def train(args):
     step = 0
     model.train()
 
-    # ---------------- 保存训练路径 ---------------- #
     all_paths = {}  # {uid: [path1, path2, ...]}
 
     for epoch in range(1, args.epochs + 1):
@@ -149,12 +144,10 @@ def train(args):
         while dataloader.has_next():
             batch_uids = dataloader.get_batch()
 
-            # ---------------- 多次采样，每个用户多条完整路径 ---------------- #
             for uid in batch_uids:
                 if uid not in all_paths:
                     all_paths[uid] = []
 
-                # 你可以根据 max_path_len 或采样次数生成多条路径
                 num_samples = args.num_path_samples if hasattr(args, 'num_path_samples') else 3
                 for _ in range(num_samples):
                     state = env.reset([uid])  # 单用户 reset
@@ -165,7 +158,7 @@ def train(args):
                         state, reward, done = env.batch_step(act_idx)
                         model.rewards.append(reward)
 
-                    # episode 完成，保存完整路径
+                    # 保存完整路径
                     all_paths[uid].append(copy.deepcopy(env._batch_path[0]))
 
             # ---------------- 学习更新 ---------------- #
@@ -181,16 +174,16 @@ def train(args):
             total_entropy.append(eloss)
             step += 1
 
-        # ---------------- 保存模型和路径 ---------------- #
+        # 保存模型
         policy_file = '{}/policy_model_epoch_{}.ckpt'.format(args.log_dir, epoch)
         torch.save(model.state_dict(), policy_file)
         logger.info("Saved model to " + policy_file)
 
+        # 保存路径
         paths_file = '{}/training_paths_epoch_{}.pkl'.format(args.log_dir, epoch)
         with open(paths_file, 'wb') as f:
             pickle.dump(all_paths, f)
         logger.info(f"Saved paths to {paths_file}")
-
 
 # ---------------- Main ---------------- #
 def main():
@@ -204,6 +197,7 @@ def main():
     parser.add_argument('--lr', type=float, default=1e-4, help='learning rate.')
     parser.add_argument('--max_acts', type=int, default=250, help='Max number of actions.')
     parser.add_argument('--max_path_len', type=int, default=3, help='Max path length.')
+    parser.add_argument('--num_path_samples', type=int, default=3, help='Number of independent paths per user')
     parser.add_argument('--gamma', type=float, default=0.99, help='reward discount factor.')
     parser.add_argument('--ent_weight', type=float, default=1e-3, help='weight factor for entropy loss')
     parser.add_argument('--act_dropout', type=float, default=0.5, help='action dropout rate.')
@@ -224,7 +218,6 @@ def main():
 
     set_random_seed(args.seed)
     train(args)
-
 
 if __name__ == '__main__':
     main()
