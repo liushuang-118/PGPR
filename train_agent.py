@@ -148,7 +148,7 @@ def train(args):
                 if uid not in all_paths:
                     all_paths[uid] = []
 
-                num_samples = args.num_path_samples if hasattr(args, 'num_path_samples') else 3
+                num_samples = args.num_path_samples if hasattr(args, 'num_path_samples') else 10
                 for _ in range(num_samples):
                     state = env.reset([uid])  # 单用户 reset
                     done = False
@@ -197,7 +197,7 @@ def main():
     parser.add_argument('--lr', type=float, default=1e-4, help='learning rate.')
     parser.add_argument('--max_acts', type=int, default=250, help='Max number of actions.')
     parser.add_argument('--max_path_len', type=int, default=3, help='Max path length.')
-    parser.add_argument('--num_path_samples', type=int, default=3, help='Number of independent paths per user')
+    parser.add_argument('--num_path_samples', type=int, default=10, help='Number of independent paths per user')
     parser.add_argument('--gamma', type=float, default=0.99, help='reward discount factor.')
     parser.add_argument('--ent_weight', type=float, default=1e-3, help='weight factor for entropy loss')
     parser.add_argument('--act_dropout', type=float, default=0.5, help='action dropout rate.')
