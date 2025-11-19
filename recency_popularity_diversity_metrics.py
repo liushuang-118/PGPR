@@ -123,7 +123,7 @@ for uid, paths in user_topk_paths.items():
     if sep_scores:
         user_sep[uid] = np.mean(sep_scores)
 
-# ===== 4️⃣ 计算 ETD（修改：路径类型取最后一个关系） =====
+# ===== 计算 ETD（修改：路径类型取最后一个关系） =====
 # 先统计全局所有路径的最后关系数量
 global_last_rels = set()
 for path in data['paths']:
@@ -149,7 +149,7 @@ for uid, paths in user_topk_paths.items():
     user_etd[uid] = etd_score
 
 
-# ===== 5️⃣ 输出所有用户平均 SEP 和 ETD =====
+# ===== 输出所有用户平均 SEP 和 ETD =====
 avg_sep = np.mean(list(user_sep.values()))
 avg_etd = np.mean(list(user_etd.values()))
 
