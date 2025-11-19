@@ -19,35 +19,35 @@ with open(PATH_FILE, 'rb') as f:
     data = pickle.load(f)
 print(f"[INFO] 已加载 {len(data['paths'])} 条 reasoning paths")
 
-# # ===== 重新使用 KG 的全局度数作为流行度 =====
-# dataset = AmazonDataset(DATA_DIR)
-# KG = KnowledgeGraph(dataset)
-# KG.compute_degrees()
+# ===== 重新使用 KG 的全局度数作为流行度 =====
+dataset = AmazonDataset(DATA_DIR)
+KG = KnowledgeGraph(dataset)
+KG.compute_degrees()
 
-# # ===== 统计每种实体类型的流行度 =====
-# entity_popularity_by_type = defaultdict(lambda: defaultdict(int))
-# for path in data['paths']:
-#     for rel, etype, eid in path:
-#         if etype != 'word':
-#             entity_popularity_by_type[etype][eid] += 1
+# ===== 统计每种实体类型的流行度 =====
+entity_popularity_by_type = defaultdict(lambda: defaultdict(int))
+for path in data['paths']:
+    for rel, etype, eid in path:
+        if etype != 'word':
+            entity_popularity_by_type[etype][eid] += 1
 
-# # ===== 对每种实体类型做 min-max 归一化 =====
-# entity_popularity_normalized = {}
+# ===== 对每种实体类型做 min-max 归一化 =====
+entity_popularity_normalized = {}
 
-# for etype, deg_dict in KG.degrees.items():
-#     values = list(deg_dict.values())
-#     min_val, max_val = min(values), max(values)
+for etype, deg_dict in KG.degrees.items():
+    values = list(deg_dict.values())
+    min_val, max_val = min(values), max(values)
 
-#     if max_val == min_val:
-#         # 避免除0
-#         entity_popularity_normalized[etype] = {eid: 0.0 for eid in deg_dict}
-#     else:
-#         entity_popularity_normalized[etype] = {
-#             eid: (deg - min_val) / (max_val - min_val)
-#             for eid, deg in deg_dict.items()
-#         }
+    if max_val == min_val:
+        # 避免除0
+        entity_popularity_normalized[etype] = {eid: 0.0 for eid in deg_dict}
+    else:
+        entity_popularity_normalized[etype] = {
+            eid: (deg - min_val) / (max_val - min_val)
+            for eid, deg in deg_dict.items()
+        }
 
-# print("[INFO] 全局实体流行度加载完成（来自 KG 度数）")
+print("[INFO] 全局实体流行度加载完成（来自 KG 度数）")
 
 
 user_products_tmp = defaultdict(list)   # {uid: [(pid, path_prob), ...]}
@@ -90,72 +90,72 @@ print(f"[INFO] 提取完成: {len(user_products)} 个用户")
 print(f"[INFO] 每个用户 Top-{TOP_P} 推荐产品与 Top-{K} 路径已生成")
 
 
-# # ===== 计算 SEP =====
-# beta_sep = 0.5
-# user_sep = {}
+# ===== 计算 SEP =====
+beta_sep = 0.5
+user_sep = {}
 
-# for uid, paths in user_topk_paths.items():
-#     sep_scores = []
+for uid, paths in user_topk_paths.items():
+    sep_scores = []
 
-#     for path in paths:
-#         # 提取每个实体的全局 popularity（已归一化）
-#         sep_values = []
-#         for rel, etype, eid in path:
-#             # 忽略 word 实体
-#             if etype == 'word':
-#                 continue
+    for path in paths:
+        # 提取每个实体的全局 popularity（已归一化）
+        sep_values = []
+        for rel, etype, eid in path:
+            # 忽略 word 实体
+            if etype == 'word':
+                continue
 
-#             # 从全局 popularity 中查询
-#             pop = entity_popularity_normalized.get(etype, {}).get(eid, 0.0)
-#             sep_values.append(pop)
+            # 从全局 popularity 中查询
+            pop = entity_popularity_normalized.get(etype, {}).get(eid, 0.0)
+            sep_values.append(pop)
 
-#         if not sep_values:
-#             continue
+        if not sep_values:
+            continue
 
-#         # 初始化：SEP(e1) = v1
-#         sep_score = sep_values[0]
+        # 初始化：SEP(e1) = v1
+        sep_score = sep_values[0]
 
-#         # 指数衰减公式
-#         for v in sep_values[1:]:
-#             sep_score = (1 - beta_sep) * sep_score + beta_sep * v
+        # 指数衰减公式
+        for v in sep_values[1:]:
+            sep_score = (1 - beta_sep) * sep_score + beta_sep * v
 
-#         sep_scores.append(sep_score)
+        sep_scores.append(sep_score)
 
-#     if sep_scores:
-#         user_sep[uid] = np.mean(sep_scores)
+    if sep_scores:
+        user_sep[uid] = np.mean(sep_scores)
 
-# # ===== 计算 ETD（修改：路径类型取最后一个关系） =====
-# # 先统计全局所有路径的最后关系数量
-# global_last_rels = set()
-# for path in data['paths']:
-#     last_rel = None
-#     for rel, etype, eid in path:
-#         if etype != 'word':
-#             last_rel = rel
-#     if last_rel is not None:
-#         global_last_rels.add(last_rel)
-# total_global_last_rels = len(global_last_rels)
+# ===== 计算 ETD（修改：路径类型取最后一个关系） =====
+# 先统计全局所有路径的最后关系数量
+global_last_rels = set()
+for path in data['paths']:
+    last_rel = None
+    for rel, etype, eid in path:
+        if etype != 'word':
+            last_rel = rel
+    if last_rel is not None:
+        global_last_rels.add(last_rel)
+total_global_last_rels = len(global_last_rels)
 
-# user_etd = {}
-# for uid, paths in user_topk_paths.items():
-#     last_rels = set()
-#     for path in paths:
-#         last_rel = None
-#         for rel, etype, eid in path:
-#             if etype != 'word':
-#                 last_rel = rel
-#         if last_rel is not None:
-#             last_rels.add(last_rel)
-#     etd_score = len(last_rels) / min(K, total_global_last_rels)
-#     user_etd[uid] = etd_score
+user_etd = {}
+for uid, paths in user_topk_paths.items():
+    last_rels = set()
+    for path in paths:
+        last_rel = None
+        for rel, etype, eid in path:
+            if etype != 'word':
+                last_rel = rel
+        if last_rel is not None:
+            last_rels.add(last_rel)
+    etd_score = len(last_rels) / min(K, total_global_last_rels)
+    user_etd[uid] = etd_score
 
 
-# # ===== 输出所有用户平均 SEP 和 ETD =====
-# avg_sep = np.mean(list(user_sep.values()))
-# avg_etd = np.mean(list(user_etd.values()))
+# ===== 输出所有用户平均 SEP 和 ETD =====
+avg_sep = np.mean(list(user_sep.values()))
+avg_etd = np.mean(list(user_etd.values()))
 
-# print(f"平均 SEP: {avg_sep:.4f}")
-# print(f"平均 ETD: {avg_etd:.4f}")
+print(f"平均 SEP: {avg_sep:.4f}")
+print(f"平均 ETD: {avg_etd:.4f}")
 
 
 # ===== 配置 =====
