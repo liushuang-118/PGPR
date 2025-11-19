@@ -7,6 +7,7 @@ from tqdm import tqdm
 from sklearn.feature_extraction.text import TfidfVectorizer
 from data_utils import AmazonDataset
 from itertools import islice
+from knowledge_graph import KnowledgeGraph
 
 # ===== 配置路径 =====
 DATA_DIR = './data/Amazon_Beauty'
@@ -17,6 +18,11 @@ with open(PATH_FILE, 'rb') as f:
     data = pickle.load(f)
 print(f"[INFO] 已加载 {len(data['paths'])} 条 reasoning paths")
 
+# ===== 重新使用 KG 的全局度数作为流行度 =====
+dataset = AmazonDataset(DATA_DIR)
+KG = KnowledgeGraph(dataset)
+KG.compute_degrees()
+
 # ===== 统计每种实体类型的流行度 =====
 entity_popularity_by_type = defaultdict(lambda: defaultdict(int))
 for path in data['paths']:
@@ -26,15 +32,21 @@ for path in data['paths']:
 
 # ===== 对每种实体类型做 min-max 归一化 =====
 entity_popularity_normalized = {}
-for etype, pop_dict in entity_popularity_by_type.items():
-    min_val = min(pop_dict.values())
-    max_val = max(pop_dict.values())
+
+for etype, deg_dict in KG.degrees.items():
+    values = list(deg_dict.values())
+    min_val, max_val = min(values), max(values)
+
     if max_val == min_val:
-        # 防止除以0
-        entity_popularity_normalized[etype] = {eid: 0.0 for eid in pop_dict}
+        # 避免除0
+        entity_popularity_normalized[etype] = {eid: 0.0 for eid in deg_dict}
     else:
-        entity_popularity_normalized[etype] = {eid: (v - min_val) / (max_val - min_val)
-                                               for eid, v in pop_dict.items()}
+        entity_popularity_normalized[etype] = {
+            eid: (deg - min_val) / (max_val - min_val)
+            for eid, deg in deg_dict.items()
+        }
+
+print("[INFO] 全局实体流行度加载完成（来自 KG 度数）")
 
 
 user_products_tmp = defaultdict(list)   # {uid: [(pid, path_prob), ...]}
@@ -85,23 +97,29 @@ for uid, paths in user_topk_paths.items():
     sep_scores = []
 
     for path in paths:
-        # 提取所有非 word 实体的归一化流行度值
-        sep_values = [entity_popularity_normalized[etype].get(eid, 0.0)
-                      for _, etype, eid in path if etype != 'word']
+        # 提取每个实体的全局 popularity（已归一化）
+        sep_values = []
+        for rel, etype, eid in path:
+            # 忽略 word 实体
+            if etype == 'word':
+                continue
+
+            # 从全局 popularity 中查询
+            pop = entity_popularity_normalized.get(etype, {}).get(eid, 0.0)
+            sep_values.append(pop)
 
         if not sep_values:
             continue
 
-        # 初始化：SEP(e1, v1) = v1
+        # 初始化：SEP(e1) = v1
         sep_score = sep_values[0]
 
-        # 指数衰减递推：SEP(e_i, v_i) = (1 - β) * SEP(e_{i-1}, v_{i-1}) + β * v_i
+        # 指数衰减公式
         for v in sep_values[1:]:
             sep_score = (1 - beta_sep) * sep_score + beta_sep * v
 
         sep_scores.append(sep_score)
 
-    # 用户 SEP 为其 top-k 路径的平均 SEP
     if sep_scores:
         user_sep[uid] = np.mean(sep_scores)
 
