@@ -2,8 +2,13 @@ import pickle
 from collections import Counter, defaultdict
 import numpy as np
 # ========= 参数 =========
-F_u_file = r'tmp\Amazon_Beauty\train_agent\training_paths_epoch_1.pkl'
-test_file = r'tmp\Amazon_Beauty\train_agent\policy_paths_epoch1.pkl'
+DATASET = "Amazon_Cellphones"
+
+# ========= 自动生成路径 =========
+BASE_DIR = f'tmp/{DATASET}/train_agent'
+
+F_u_file = f'{BASE_DIR}/training_paths_epoch_1.pkl'
+test_file = f'{BASE_DIR}/policy_paths_epoch1.pkl'
 
 # ========= 工具函数 =========
 def extract_relations(path):
