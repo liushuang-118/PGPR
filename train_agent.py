@@ -127,20 +127,16 @@ class ACDataLoader(object):
 # ---------------- Training ---------------- #
 def train(args):
     env = BatchKGEnvironment(args.dataset, args.max_acts, max_path_len=args.max_path_len, state_history=args.state_history)
-    uids = list(env.kg('user').keys())
+    uids = list(env.kg(USER).keys())
     dataloader = ACDataLoader(uids, args.batch_size)
-
     model = ActorCritic(env.state_dim, env.act_dim, gamma=args.gamma, hidden_sizes=args.hidden).to(args.device)
-    if torch.cuda.is_available() and torch.cuda.device_count() > 1:
-        print(f"[INFO] Using {torch.cuda.device_count()} GPUs for training")
-        model = torch.nn.DataParallel(model)
-
     logger.info('Parameters:' + str([i[0] for i in model.named_parameters()]))
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
 
     total_losses, total_plosses, total_vlosses, total_entropy, total_rewards = [], [], [], [], []
     step = 0
     model.train()
+
     all_paths = {}  # {uid: [path1, path2, ...]}
 
     for epoch in range(1, args.epochs + 1):
@@ -154,14 +150,15 @@ def train(args):
 
                 num_samples = args.num_path_samples if hasattr(args, 'num_path_samples') else 10
                 for _ in range(num_samples):
-                    state = env.reset([uid])
+                    state = env.reset([uid])  # 单用户 reset
                     done = False
                     while not done:
                         act_mask = env.batch_action_mask(dropout=args.act_dropout)
-                        act_idx = model.module.select_action(state, act_mask, args.device) if isinstance(model, torch.nn.DataParallel) else model.select_action(state, act_mask, args.device)
+                        act_idx = model.select_action(state, act_mask, args.device)
                         state, reward, done = env.batch_step(act_idx)
-                        model.module.rewards.append(reward) if isinstance(model, torch.nn.DataParallel) else model.rewards.append(reward)
+                        model.rewards.append(reward)
 
+                    # 保存完整路径
                     all_paths[uid].append(copy.deepcopy(env._batch_path[0]))
 
             # ---------------- 学习更新 ---------------- #
@@ -169,8 +166,8 @@ def train(args):
             for pg in optimizer.param_groups:
                 pg['lr'] = lr
 
-            total_rewards.append(np.sum(model.module.rewards) if isinstance(model, torch.nn.DataParallel) else np.sum(model.rewards))
-            loss, ploss, vloss, eloss = model.module.update(optimizer, args.device, args.ent_weight) if isinstance(model, torch.nn.DataParallel) else model.update(optimizer, args.device, args.ent_weight)
+            total_rewards.append(np.sum(model.rewards))
+            loss, ploss, vloss, eloss = model.update(optimizer, args.device, args.ent_weight)
             total_losses.append(loss)
             total_plosses.append(ploss)
             total_vlosses.append(vloss)
@@ -179,7 +176,7 @@ def train(args):
 
         # 保存模型
         policy_file = '{}/policy_model_epoch_{}.ckpt'.format(args.log_dir, epoch)
-        torch.save(model.module.state_dict() if isinstance(model, torch.nn.DataParallel) else model.state_dict(), policy_file)
+        torch.save(model.state_dict(), policy_file)
         logger.info("Saved model to " + policy_file)
 
         # 保存路径
@@ -191,10 +188,10 @@ def train(args):
 # ---------------- Main ---------------- #
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset', type=str, default='beauty', help='One of {clothing, cell, beauty, cd}')
+    parser.add_argument('--dataset', type=str, default=BEAUTY, help='One of {clothing, cell, beauty, cd}')
     parser.add_argument('--name', type=str, default='train_agent', help='directory name.')
     parser.add_argument('--seed', type=int, default=123, help='random seed.')
-    parser.add_argument('--gpu', type=str, default='0', help='gpu device (ignored, auto-detect).')
+    parser.add_argument('--gpu', type=str, default='0', help='gpu device.')
     parser.add_argument('--epochs', type=int, default=1, help='Max number of epochs.')
     parser.add_argument('--batch_size', type=int, default=32, help='batch size.')
     parser.add_argument('--lr', type=float, default=1e-4, help='learning rate.')
@@ -208,13 +205,14 @@ def main():
     parser.add_argument('--hidden', type=int, nargs='*', default=[512, 256], help='number of hidden units')
     args = parser.parse_args()
 
-    # GPU 自动检测
+    os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
+    args.device = torch.device('cuda:0') if torch.cuda.is_available() else 'cpu'
+
+    print("Using device:", args.device)
+    print("CUDA available:", torch.cuda.is_available())
+    print("Number of GPUs:", torch.cuda.device_count())
     if torch.cuda.is_available():
-        device_count = torch.cuda.device_count()
-        print(f"[INFO] {device_count} GPU(s) detected")
-        args.device = torch.device('cuda:0')
-    else:
-        args.device = torch.device('cpu')
+        print("Current GPU name:", torch.cuda.get_device_name(0))
 
     args.log_dir = '{}/{}'.format(TMP_DIR[args.dataset], args.name)
     if not os.path.isdir(args.log_dir):
