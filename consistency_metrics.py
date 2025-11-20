@@ -8,9 +8,12 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from data_utils import AmazonDataset
 from itertools import islice
 
-# ===== 配置路径 =====
-DATA_DIR = './data/Amazon_Beauty'
-PATH_FILE = './tmp/Amazon_Beauty/train_agent/policy_paths_epoch1.pkl'
+# ===== 只需要改这一行 =====
+DATASET = "Amazon_Cellphones"   # 换数据集就改这一行即可
+
+# ===== 自动拼接路径 =====
+DATA_DIR  = f'./data/{DATASET}'
+PATH_FILE = f'./tmp/{DATASET}/train_agent/policy_paths_epoch1.pkl'
 
 # ===== 1️⃣ 加载 reasoning paths =====
 with open(PATH_FILE, 'rb') as f:
