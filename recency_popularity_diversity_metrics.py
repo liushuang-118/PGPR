@@ -8,7 +8,7 @@ from data_utils import AmazonDataset
 from knowledge_graph import KnowledgeGraph
 
 # ===== 配置 =====
-DATASET_NAME = 'Amazon_Cellphones'  # 可改为其他数据集
+DATASET_NAME = 'Amazon_Clothing'  # 可改为其他数据集
 DATA_DIR = f'./data/{DATASET_NAME}'
 PATH_FILE = f'./tmp/{DATASET_NAME}/train_agent/policy_paths_epoch1.pkl'
 TIME_TRAIN_FILE = f'{DATA_DIR}/time_train.csv'
@@ -160,4 +160,4 @@ for uid, lir_list in user_lir_raw.items():
     else:
         user_lir[uid] = np.mean([(x - min_lir) / (max_lir - min_lir) for x in lir_list])
 avg_lir = np.mean(list(user_lir.values()))
-print(f"[INFO] 平均 LIR (归一化到 [0,1]): {avg_lir:.4f}")
+print(f"[INFO] 平均 LIR: {avg_lir:.4f}")
