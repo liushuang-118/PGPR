@@ -154,7 +154,7 @@ def predict_paths(policy_file, path_file, args):
 # ----------------------------
 # New: sample train-user paths (stochastic sampling using learned policy)
 # ----------------------------
-def sample_train_paths_for_faithfulness(policy_file, out_path, args, num_users=50, num_paths=1000):
+def sample_train_paths_for_faithfulness(policy_file, out_path, args, num_users=50, num_paths=10):
     """
     Sample training paths for faithfulness.
     Each path ends at PRODUCT nodes, and each step has a probability.
