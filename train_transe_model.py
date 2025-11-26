@@ -1,3 +1,4 @@
+
 from __future__ import absolute_import, division, print_function
 
 import os
@@ -8,13 +9,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-
-if not hasattr(np, 'float'):
-    np.float = float
-if not hasattr(np, 'int'):
-    np.int = int
-if not hasattr(np, 'bool'):
-    np.bool = bool
 
 from utils import *
 from data_utils import AmazonDataset, AmazonDataLoader
@@ -29,47 +23,33 @@ def train(args):
     dataloader = AmazonDataLoader(dataset, args.batch_size)
     words_to_train = args.epochs * dataset.review.word_count + 1
 
-    # ----------- Create Model -----------
     model = KnowledgeEmbedding(dataset, args).to(args.device)
-
-    # ----------- Load Checkpoint If Exists -----------
-    start_epoch = 1
-    ckpt_path = f"{args.log_dir}/transe_model_sd_epoch_28.ckpt"
-
-    if os.path.exists(ckpt_path):
-        logger.info(f"Checkpoint detected. Loading from: {ckpt_path}")
-        state = torch.load(ckpt_path, map_location=args.device)
-        model.load_state_dict(state)
-        start_epoch = 29
-        logger.info("Continue training from epoch 29")
-    else:
-        logger.info("No checkpoint found. Training from scratch.")
-
-    # ----------- Optimizer -----------
+    logger.info('Parameters:' + str([i[0] for i in model.named_parameters()]))
     optimizer = optim.SGD(model.parameters(), lr=args.lr)
     steps = 0
     smooth_loss = 0.0
 
-    # ----------- Train Loop -----------
-    for epoch in range(start_epoch, args.epochs + 1):
+    for epoch in range(1, args.epochs + 1):
         dataloader.reset()
         while dataloader.has_next():
+            # Set learning rate.
             lr = args.lr * max(1e-4, 1.0 - dataloader.finished_word_num / float(words_to_train))
             for pg in optimizer.param_groups:
                 pg['lr'] = lr
 
+            # Get training batch.
             batch_idxs = dataloader.get_batch()
-            batch_idxs = torch.from_numpy(batch_idxs).long().to(args.device)
+            batch_idxs = torch.from_numpy(batch_idxs).to(args.device)
 
+            # Train model.
             optimizer.zero_grad()
             train_loss = model(batch_idxs)
             train_loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
             optimizer.step()
-
             smooth_loss += train_loss.item() / args.steps_per_checkpoint
-            steps += 1
 
+            steps += 1
             if steps % args.steps_per_checkpoint == 0:
                 logger.info('Epoch: {:02d} | '.format(epoch) +
                             'Words: {:d}/{:d} | '.format(dataloader.finished_word_num, words_to_train) +
@@ -77,20 +57,16 @@ def train(args):
                             'Smooth loss: {:.5f}'.format(smooth_loss))
                 smooth_loss = 0.0
 
-        # Save checkpoint
-        save_path = f"{args.log_dir}/transe_model_sd_epoch_{epoch}.ckpt"
-        torch.save(model.state_dict(), save_path)
-        logger.info(f"Saved checkpoint: {save_path}")
+        torch.save(model.state_dict(), '{}/transe_model_sd_epoch_{}.ckpt'.format(args.log_dir, epoch))
 
 
 def extract_embeddings(args):
-    """Extract embeddings from the final epoch."""
-    model_file = f"{args.log_dir}/transe_model_sd_epoch_{args.epochs}.ckpt"
-    print("Load embeddings", model_file)
+    """Note that last entity embedding is of size [vocab_size+1, d]."""
+    model_file = '{}/transe_model_sd_epoch_{}.ckpt'.format(args.log_dir, args.epochs)
+    print('Load embeddings', model_file)
     state_dict = torch.load(model_file, map_location=lambda storage, loc: storage)
-
     embeds = {
-        USER: state_dict['user.weight'].cpu().data.numpy()[:-1],
+        USER: state_dict['user.weight'].cpu().data.numpy()[:-1],  # Must remove last dummy 'user' with 0 embed.
         PRODUCT: state_dict['product.weight'].cpu().data.numpy()[:-1],
         WORD: state_dict['word.weight'].cpu().data.numpy()[:-1],
         BRAND: state_dict['brand.weight'].cpu().data.numpy()[:-1],
@@ -130,7 +106,6 @@ def extract_embeddings(args):
             state_dict['bought_together_bias.weight'].cpu().data.numpy()
         ),
     }
-
     save_embed(args.dataset, embeds)
 
 
@@ -139,16 +114,16 @@ def main():
     parser.add_argument('--dataset', type=str, default=BEAUTY, help='One of {beauty, cd, cell, clothing}.')
     parser.add_argument('--name', type=str, default='train_transe_model', help='model name.')
     parser.add_argument('--seed', type=int, default=123, help='random seed.')
-    parser.add_argument('--gpu', type=str, default='0', help='gpu device.')
+    parser.add_argument('--gpu', type=str, default='1', help='gpu device.')
     parser.add_argument('--epochs', type=int, default=30, help='number of epochs to train.')
     parser.add_argument('--batch_size', type=int, default=64, help='batch size.')
     parser.add_argument('--lr', type=float, default=0.5, help='learning rate.')
-    parser.add_argument('--weight_decay', type=float, default=0)
-    parser.add_argument('--l2_lambda', type=float, default=0)
-    parser.add_argument('--max_grad_norm', type=float, default=5.0)
-    parser.add_argument('--embed_size', type=int, default=100)
-    parser.add_argument('--num_neg_samples', type=int, default=5)
-    parser.add_argument('--steps_per_checkpoint', type=int, default=200)
+    parser.add_argument('--weight_decay', type=float, default=0, help='weight decay for adam.')
+    parser.add_argument('--l2_lambda', type=float, default=0, help='l2 lambda')
+    parser.add_argument('--max_grad_norm', type=float, default=5.0, help='Clipping gradient.')
+    parser.add_argument('--embed_size', type=int, default=100, help='knowledge embedding size.')
+    parser.add_argument('--num_neg_samples', type=int, default=5, help='number of negative samples.')
+    parser.add_argument('--steps_per_checkpoint', type=int, default=200, help='Number of steps for checkpoint.')
     args = parser.parse_args()
 
     os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
