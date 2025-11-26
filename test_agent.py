@@ -156,89 +156,6 @@ def predict_paths(policy_file, path_file, args):
 # ----------------------------
 def sample_train_paths_for_faithfulness(policy_file, out_path, args, num_users=50, num_paths=1000):
     """
-    Using the trained policy, randomly sample `num_users` users from the TRAIN set;
-    for each user sample `num_paths` complete paths that end at PRODUCT nodes.
-    Save result as a dict {'paths': [path1, path2, ...], 'probs': [prob1, prob2, ...]} to out_path (pickle),
-    similar to predict_paths output format.
-    """
-    print("Sampling training paths for faithfulness (this may take a while)...")
-    
-    # Prepare environment and model
-    env = BatchKGEnvironment(args.dataset, args.max_acts, max_path_len=args.max_path_len, state_history=args.state_history)
-    pretrain_sd = torch.load(policy_file, map_location=lambda s, l: s)
-    model = ActorCritic(env.state_dim, env.act_dim, gamma=args.gamma, hidden_sizes=args.hidden).to(args.device)
-    model_sd = model.state_dict()
-    model_sd.update(pretrain_sd)
-    model.load_state_dict(model_sd)
-    model.eval()
-
-    # Load train user list
-    train_labels = load_labels(args.dataset, 'train')
-    train_uids = list(train_labels.keys())
-    if len(train_uids) == 0:
-        raise RuntimeError("Train user list empty.")
-
-    sampled_uids = random.sample(train_uids, min(num_users, len(train_uids)))
-    print(f"Selected {len(sampled_uids)} train users to sample.")
-
-    all_paths, all_probs = [], []
-
-    with torch.no_grad():
-        for uid in tqdm(sampled_uids, desc="Sampling users"):
-            model.saved_actions = []
-            model.rewards = []
-            model.entropy = []
-
-            user_paths = 0
-            while user_paths < num_paths:
-                state = env.reset([uid])
-                done = False
-                path_prob_list = []
-
-                # Keep track of previous node to avoid consecutive self_loop
-                prev_node = state[0][0]  # initial node id
-
-                while not done:
-                    act_mask = env.batch_action_mask(dropout=0.0)
-
-                    # Select action
-                    action_list = model.select_action([state[0]], [act_mask[0]], args.device)
-                    action = action_list[0]
-
-                    # If action is self_loop and previous node same, resample once
-                    if len(env._batch_path[0]) > 0 and action[0] == 'self_loop' and env._batch_path[0][-1][2] == prev_node:
-                        action_list = model.select_action([state[0]], [act_mask[0]], args.device)
-                        action = action_list[0]
-
-                    state, reward, done = env.batch_step([action])
-                    path_prob_list.append(model.saved_actions[-1].log_prob.item())
-                    prev_node = env._batch_path[0][-1][2]
-
-                # Only keep paths ending at PRODUCT
-                path = copy.deepcopy(env._batch_path[0])
-                if path[-1][1] == PRODUCT:
-                    all_paths.append(path)
-                    path_prob = np.exp(np.sum(path_prob_list))
-                    all_probs.append(path_prob)
-                    user_paths += 1
-
-            # Clear model buffers
-            model.saved_actions = []
-            model.rewards = []
-            model.entropy = []
-
-    # Save to file
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    with open(out_path, 'wb') as f:
-        pickle.dump({'paths': all_paths, 'probs': all_probs}, f)
-
-
-
-# ----------------------------
-# Evaluate predicted paths -> produce top-k product labels and run recommendation metrics
-# ----------------------------
-def sample_train_paths_for_faithfulness(policy_file, out_path, args, num_users=10, num_paths=100):
-    """
     Sample training paths for faithfulness.
     Each path ends at PRODUCT nodes, and each step has a probability.
     Save result as {'paths': [...], 'probs': [[p1, p2,...], ...]}.
@@ -299,6 +216,70 @@ def sample_train_paths_for_faithfulness(policy_file, out_path, args, num_users=1
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, 'wb') as f:
         pickle.dump({'paths': all_paths, 'probs': all_probs}, f)
+
+
+
+# ----------------------------
+# Evaluate predicted paths -> produce top-k product labels and run recommendation metrics
+# ----------------------------
+def evaluate_paths(path_file, train_labels, test_labels, args):
+    embeds = load_embed(args.dataset)
+    user_embeds = embeds[USER]
+    purchase_embeds = embeds[PURCHASE][0]
+    product_embeds = embeds[PRODUCT]
+    scores = np.dot(user_embeds + purchase_embeds, product_embeds.T)
+
+    # 1) Get all valid paths for each user, compute path score and path probability.
+    results = pickle.load(open(path_file, 'rb'))
+    pred_paths = {uid: {} for uid in test_labels}
+    for path, probs in zip(results['paths'], results['probs']):
+        if path[-1][1] != PRODUCT:
+            continue
+        uid = path[0][2]
+        if uid not in pred_paths:
+            continue
+        pid = path[-1][2]
+        if pid not in pred_paths[uid]:
+            pred_paths[uid][pid] = []
+        path_score = scores[uid][pid]
+        path_prob = reduce(lambda x, y: x * y, probs)
+        pred_paths[uid][pid].append((path_score, path_prob, path))
+
+    # 2) Pick best path for each user-product pair, also remove pid if it is in train set.
+    best_pred_paths = {}
+    for uid in pred_paths:
+        train_pids = set(train_labels[uid])
+        best_pred_paths[uid] = []
+        for pid in pred_paths[uid]:
+            if pid in train_pids:
+                continue
+            # Get the path with highest probability
+            sorted_path = sorted(pred_paths[uid][pid], key=lambda x: x[1], reverse=True)
+            best_pred_paths[uid].append(sorted_path[0])
+
+    # 3) Compute top 10 recommended products for each user.
+    sort_by = 'score'
+    pred_labels = {}
+    for uid in best_pred_paths:
+        if sort_by == 'score':
+            sorted_path = sorted(best_pred_paths[uid], key=lambda x: (x[0], x[1]), reverse=True)
+        elif sort_by == 'prob':
+            sorted_path = sorted(best_pred_paths[uid], key=lambda x: (x[1], x[0]), reverse=True)
+        top10_pids = [p[-1][2] for _, _, p in sorted_path[:10]]  # from largest to smallest
+        # add up to 10 pids if not enough
+        if args.add_products and len(top10_pids) < 10:
+            train_pids = set(train_labels[uid])
+            cand_pids = np.argsort(scores[uid])
+            for cand_pid in cand_pids[::-1]:
+                if cand_pid in train_pids or cand_pid in top10_pids:
+                    continue
+                top10_pids.append(cand_pid)
+                if len(top10_pids) >= 10:
+                    break
+        # end of add
+        pred_labels[uid] = top10_pids[::-1]  # change order to from smallest to largest!
+
+    evaluate(pred_labels, test_labels)
 
 
 # ----------------------------
