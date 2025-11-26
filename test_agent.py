@@ -333,7 +333,7 @@ if __name__ == '__main__':
     parser.add_argument('--sample_train_faith', type=boolean, default=True,
                         help='If true, sample train users paths for faithfulness (50 users x 1000 paths by default)')
     parser.add_argument('--num_train_users', type=int, default=50, help='Number of train users to sample')
-    parser.add_argument('--num_paths_per_user', type=int, default=1000, help='Number of paths per train user to sample')
+    parser.add_argument('--num_paths_per_user', type=int, default=10, help='Number of paths per train user to sample')
     args = parser.parse_args()
 
     os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
