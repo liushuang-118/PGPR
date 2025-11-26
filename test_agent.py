@@ -237,7 +237,7 @@ def sample_train_paths_for_faithfulness(policy_file, out_path, args, num_users=5
 # ----------------------------
 # Evaluate predicted paths -> produce top-k product labels and run recommendation metrics
 # ----------------------------
-def sample_train_paths_for_faithfulness(policy_file, out_path, args, num_users=50, num_paths=1000):
+def sample_train_paths_for_faithfulness(policy_file, out_path, args, num_users=10, num_paths=100):
     """
     Sample training paths for faithfulness.
     Each path ends at PRODUCT nodes, and each step has a probability.
