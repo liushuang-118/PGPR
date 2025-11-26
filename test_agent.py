@@ -158,7 +158,8 @@ def sample_train_paths_for_faithfulness(policy_file, out_path, args, num_users=5
     """
     Using the trained policy, randomly sample `num_users` users from the TRAIN set;
     for each user sample `num_paths` complete paths that end at PRODUCT nodes.
-    Save result as a dict {uid: [path1, path2, ...]} to out_path (pickle).
+    Save result as a dict {'paths': [path1, path2, ...], 'probs': [prob1, prob2, ...]} to out_path (pickle),
+    similar to predict_paths output format.
     """
     print("Sampling training paths for faithfulness (this may take a while)...")
     # Prepare environment and model
@@ -179,29 +180,36 @@ def sample_train_paths_for_faithfulness(policy_file, out_path, args, num_users=5
     sampled_uids = random.sample(train_uids, min(num_users, len(train_uids)))
     print(f"Selected {len(sampled_uids)} train users to sample.")
 
-    all_paths = {}  # uid -> list of paths
-    # We'll use no_grad to avoid autograd overhead and clear saved_actions periodically.
+    all_paths, all_probs = [], []  # Same format as predict_paths output
+
     with torch.no_grad():
         for uid in tqdm(sampled_uids):
-            all_paths[uid] = []
             model.saved_actions = []
             model.rewards = []
             model.entropy = []
 
-            while len(all_paths[uid]) < num_paths:
+            user_paths = 0
+            while user_paths < num_paths:
                 # reset environment for single user u
-                state = env.reset([uid])  # numpy array [1, state_dim]
+                state = env.reset([uid])
                 done = False
+                path_prob_list = []
                 while not done:
-                    act_mask = env.batch_action_mask(dropout=0.0)  # shape [1, act_dim]
+                    act_mask = env.batch_action_mask(dropout=0.0)
                     action_list = model.select_action([state[0]], [act_mask[0]], args.device)
                     state, reward, done = env.batch_step([action_list[0]])
+                    path_prob_list.append(model.saved_actions[-1].log_prob.item())
                 # env._batch_path[0] is the sampled path
                 path = copy.deepcopy(env._batch_path[0])
-                # Only keep paths that end at PRODUCT
+                # Only keep paths ending at PRODUCT
                 if path[-1][1] == PRODUCT:
-                    all_paths[uid].append(path)
-            # clear again
+                    all_paths.append(path)
+                    # compute path probability: product of action probabilities
+                    path_prob = np.exp(np.sum(path_prob_list))
+                    all_probs.append(path_prob)
+                    user_paths += 1
+
+            # Clear model buffers
             model.saved_actions = []
             model.rewards = []
             model.entropy = []
@@ -209,8 +217,9 @@ def sample_train_paths_for_faithfulness(policy_file, out_path, args, num_users=5
     # Save to file
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, 'wb') as f:
-        pickle.dump(all_paths, f)
+        pickle.dump({'paths': all_paths, 'probs': all_probs}, f)
     print(f"Saved sampled training paths to {out_path}")
+
 
 
 
