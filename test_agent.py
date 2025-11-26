@@ -157,7 +157,7 @@ def predict_paths(policy_file, path_file, args):
 def sample_train_paths_for_faithfulness(policy_file, out_path, args, num_users=50, num_paths=1000):
     """
     Using the trained policy, randomly sample `num_users` users from the TRAIN set;
-    for each user sample `num_paths` complete paths (stochastic actions via policy.select_action).
+    for each user sample `num_paths` complete paths that end at PRODUCT nodes.
     Save result as a dict {uid: [path1, path2, ...]} to out_path (pickle).
     """
     print("Sampling training paths for faithfulness (this may take a while)...")
@@ -180,31 +180,27 @@ def sample_train_paths_for_faithfulness(policy_file, out_path, args, num_users=5
     print(f"Selected {len(sampled_uids)} train users to sample.")
 
     all_paths = {}  # uid -> list of paths
-    # We'll use no_grad to avoid any autograd overhead and clear saved_actions periodically.
+    # We'll use no_grad to avoid autograd overhead and clear saved_actions periodically.
     with torch.no_grad():
         for uid in tqdm(sampled_uids):
             all_paths[uid] = []
-            # To reduce memory growth in ActorCritic (it stores saved_actions etc.), clear them before user sampling
             model.saved_actions = []
             model.rewards = []
             model.entropy = []
-            # Sample paths
-            for _ in range(num_paths):
+
+            while len(all_paths[uid]) < num_paths:
                 # reset environment for single user u
                 state = env.reset([uid])  # numpy array [1, state_dim]
                 done = False
-                # run episode until done
                 while not done:
-                    # get action mask for batch of size 1
                     act_mask = env.batch_action_mask(dropout=0.0)  # shape [1, act_dim]
-                    # model.select_action expects lists, so pass [state[0]] and [act_mask[0]]
-                    # It will append saved_actions — we clear them per user so this is okay.
                     action_list = model.select_action([state[0]], [act_mask[0]], args.device)
-                    # action_list is a list (len=1), need to wrap as list for env.batch_step
                     state, reward, done = env.batch_step([action_list[0]])
-                # After episode finished, env._batch_path[0] holds this sampled path
-                # Deepcopy to avoid pointers to mutable objects
-                all_paths[uid].append(copy.deepcopy(env._batch_path[0]))
+                # env._batch_path[0] is the sampled path
+                path = copy.deepcopy(env._batch_path[0])
+                # Only keep paths that end at PRODUCT
+                if path[-1][1] == PRODUCT:
+                    all_paths[uid].append(path)
             # clear again
             model.saved_actions = []
             model.rewards = []
@@ -215,6 +211,7 @@ def sample_train_paths_for_faithfulness(policy_file, out_path, args, num_users=5
     with open(out_path, 'wb') as f:
         pickle.dump(all_paths, f)
     print(f"Saved sampled training paths to {out_path}")
+
 
 
 # ----------------------------
@@ -317,7 +314,7 @@ if __name__ == '__main__':
     parser.add_argument('--name', type=str, default='train_agent', help='directory name.')
     parser.add_argument('--seed', type=int, default=123, help='random seed.')
     parser.add_argument('--gpu', type=str, default='0', help='gpu device.')
-    parser.add_argument('--epochs', type=int, default=50, help='num of epochs.')
+    parser.add_argument('--epochs', type=int, default=1, help='num of epochs.')
     parser.add_argument('--max_acts', type=int, default=250, help='Max number of actions.')
     parser.add_argument('--max_path_len', type=int, default=3, help='Max path length.')
     parser.add_argument('--gamma', type=float, default=0.99, help='reward discount factor.')
