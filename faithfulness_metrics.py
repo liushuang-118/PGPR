@@ -2,7 +2,7 @@ import pickle
 from collections import Counter, defaultdict
 import numpy as np
 # ========= 参数 =========
-DATASET = "Amazon_Cellphones"
+DATASET = "Amazon_Beauty"
 
 # ========= 自动生成路径 =========
 BASE_DIR = f'tmp/{DATASET}/train_agent'

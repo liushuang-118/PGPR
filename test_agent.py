@@ -154,7 +154,7 @@ def predict_paths(policy_file, path_file, args):
 # ----------------------------
 # New: sample train-user paths (stochastic sampling using learned policy)
 # ----------------------------
-def sample_train_paths_for_faithfulness(policy_file, out_path, args, num_users=50, num_paths=10):
+def sample_train_paths_for_faithfulness(policy_file, out_path, args, num_users=50, num_paths=1000):
     """
     Sample training paths for faithfulness.
     Each path ends at PRODUCT nodes, and each step has a probability.
@@ -319,7 +319,7 @@ if __name__ == '__main__':
     parser.add_argument('--name', type=str, default='train_agent', help='directory name.')
     parser.add_argument('--seed', type=int, default=123, help='random seed.')
     parser.add_argument('--gpu', type=str, default='0', help='gpu device.')
-    parser.add_argument('--epochs', type=int, default=1, help='num of epochs.')
+    parser.add_argument('--epochs', type=int, default=50, help='num of epochs.')
     parser.add_argument('--max_acts', type=int, default=250, help='Max number of actions.')
     parser.add_argument('--max_path_len', type=int, default=3, help='Max path length.')
     parser.add_argument('--gamma', type=float, default=0.99, help='reward discount factor.')
@@ -333,7 +333,7 @@ if __name__ == '__main__':
     parser.add_argument('--sample_train_faith', type=boolean, default=True,
                         help='If true, sample train users paths for faithfulness (50 users x 1000 paths by default)')
     parser.add_argument('--num_train_users', type=int, default=50, help='Number of train users to sample')
-    parser.add_argument('--num_paths_per_user', type=int, default=10, help='Number of paths per train user to sample')
+    parser.add_argument('--num_paths_per_user', type=int, default=1000, help='Number of paths per train user to sample')
     args = parser.parse_args()
 
     os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
