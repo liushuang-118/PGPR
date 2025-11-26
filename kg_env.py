@@ -11,7 +11,6 @@ from datetime import datetime
 from knowledge_graph import KnowledgeGraph
 from utils import *
 
-
 class KGState(object):
     def __init__(self, embed_size, history_len=1):
         self.embed_size = embed_size
@@ -36,7 +35,6 @@ class KGState(object):
                                    older_relation_embed])
         else:
             raise Exception('mode should be one of {full, current}')
-
 
 class BatchKGEnvironment(object):
     def __init__(self, dataset_str, max_acts, max_path_len=3, state_history=1):
@@ -206,18 +204,48 @@ class BatchKGEnvironment(object):
 
         return self._batch_curr_state
 
-    def batch_step(self, batch_act_idx):
+    # def batch_step(self, batch_act_idx):
+    #     """
+    #     Args:
+    #         batch_act_idx: list of integers.
+    #     Returns:
+    #         batch_next_state: numpy array of size [bs, state_dim].
+    #         batch_reward: numpy array of size [bs].
+    #         done: True/False
+    #     """
+    #     assert len(batch_act_idx) == len(self._batch_path)
+
+    #     # Execute batch actions.
+    #     for i in range(len(batch_act_idx)):
+    #         act_idx = batch_act_idx[i]
+    #         _, curr_node_type, curr_node_id = self._batch_path[i][-1]
+    #         relation, next_node_id = self._batch_curr_actions[i][act_idx]
+    #         if relation == SELF_LOOP:
+    #             next_node_type = curr_node_type
+    #         else:
+    #             next_node_type = KG_RELATION[curr_node_type][relation]
+    #         self._batch_path[i].append((relation, next_node_type, next_node_id))
+
+    #     self._done = self._is_done()  # must run before get actions, etc.
+    #     self._batch_curr_state = self._batch_get_state(self._batch_path)
+    #     self._batch_curr_actions = self._batch_get_actions(self._batch_path, self._done)
+    #     self._batch_curr_reward = self._batch_get_reward(self._batch_path)
+
+    #     return self._batch_curr_state, self._batch_curr_reward, self._done
+    def batch_step(self, batch_act_idx, return_path=False):
         """
         Args:
             batch_act_idx: list of integers.
+            return_path: bool, whether to return the current paths
         Returns:
             batch_next_state: numpy array of size [bs, state_dim].
             batch_reward: numpy array of size [bs].
             done: True/False
+            batch_paths (optional): list of paths
         """
         assert len(batch_act_idx) == len(self._batch_path)
 
-        # Execute batch actions.
+        # 执行动作
         for i in range(len(batch_act_idx)):
             act_idx = batch_act_idx[i]
             _, curr_node_type, curr_node_id = self._batch_path[i][-1]
@@ -228,12 +256,15 @@ class BatchKGEnvironment(object):
                 next_node_type = KG_RELATION[curr_node_type][relation]
             self._batch_path[i].append((relation, next_node_type, next_node_id))
 
-        self._done = self._is_done()  # must run before get actions, etc.
+        self._done = self._is_done()
         self._batch_curr_state = self._batch_get_state(self._batch_path)
         self._batch_curr_actions = self._batch_get_actions(self._batch_path, self._done)
         self._batch_curr_reward = self._batch_get_reward(self._batch_path)
 
-        return self._batch_curr_state, self._batch_curr_reward, self._done
+        if return_path:
+            return self._batch_curr_state, self._batch_curr_reward, self._done, self._batch_path
+        else:
+            return self._batch_curr_state, self._batch_curr_reward, self._done
 
     def batch_action_mask(self, dropout=0.0):
         """Return action masks of size [bs, act_dim]."""
