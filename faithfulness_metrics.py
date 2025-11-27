@@ -2,13 +2,16 @@ import pickle
 from collections import defaultdict, Counter
 import numpy as np
 from scipy.spatial.distance import jensenshannon
+import random
 
 # ========= 参数 =========
 DATASET = "Amazon_Beauty"
 BASE_DIR = f"tmp/{DATASET}/train_agent"
 TRAIN_FILE = f"{BASE_DIR}/train_sampled_paths.pkl"
 TEST_FILE  = f"{BASE_DIR}/policy_paths_epoch50.pkl"
-TOPK_PRODUCTS = 20
+
+TOPK_PRODUCTS = 20          # 增加 top-K 产品数量
+NUM_PATHS_PER_PRODUCT = 50  # 每个产品随机采样路径数量
 
 # ========= 有效关系 =========
 VALID_RELATIONS = [
@@ -23,7 +26,6 @@ with open(TRAIN_FILE, "rb") as f:
     train_data = pickle.load(f)
 
 F_u = defaultdict(Counter)
-
 for path in train_data['paths']:
     uid = None
     for rel, typ, idx in path:
@@ -39,16 +41,17 @@ for uid, counter in F_u.items():
     if total > 0:
         F_u_norm[uid] = {rel: count / total for rel, count in counter.items()}
 
+train_users = set(F_u_norm.keys())
 print(f"[INFO] Built F(u) for {len(F_u_norm)} users")
 
-# ========= 2. 处理测试路径 (仅训练用户) =========
+# ================================
+# 2. 处理测试路径 (仅训练用户)
+# ================================
 with open(TEST_FILE, "rb") as f:
     test_data = pickle.load(f)
 
 paths = test_data['paths']
 probs = test_data['probs']
-
-train_users = set(F_u_norm.keys())
 
 user_prod_scores = defaultdict(lambda: defaultdict(float))
 user_prod_paths  = defaultdict(lambda: defaultdict(list))
@@ -61,20 +64,13 @@ for path, p_list in zip(paths, probs):
             uid = idx
         elif typ == "product":
             pid = idx
-    if uid is None or pid is None:
-        continue
-    if uid not in train_users:  # 只保留训练用户
+    if uid is None or pid is None or uid not in train_users:
         continue
 
-    # 累积每个产品概率
     user_prod_scores[uid][pid] += path_prob
-    # 保存所有路径及其概率
-    user_prod_paths[uid][pid].append({
-        "path": path,
-        "prob": path_prob
-    })
+    user_prod_paths[uid][pid].append({"path": path, "prob": path_prob})
 
-# 选 top-K 产品及每个产品最大概率路径
+# 随机采样 top-K 产品及每个产品多条路径
 user_topk_paths = defaultdict(list)
 for uid in train_users:
     score_dict = user_prod_scores.get(uid, {})
@@ -82,12 +78,13 @@ for uid in train_users:
         continue
     sorted_prods = sorted(score_dict.items(), key=lambda x: x[1], reverse=True)
     topk_pids = [pid for pid, _ in sorted_prods[:TOPK_PRODUCTS]]
-    for pid in topk_pids:
-        sorted_paths = sorted(user_prod_paths[uid][pid], key=lambda x: x['prob'], reverse=True)
-        if sorted_paths:
-            user_topk_paths[uid].append(sorted_paths[0])  # 取概率最高的路径
 
-print(f"[INFO] Got top-{TOPK_PRODUCTS} products & paths for {len(user_topk_paths)} users")
+    for pid in topk_pids:
+        paths_list = user_prod_paths[uid][pid]
+        sampled_paths = random.sample(paths_list, min(NUM_PATHS_PER_PRODUCT, len(paths_list)))
+        user_topk_paths[uid].extend(sampled_paths)
+
+print(f"[INFO] Got top-{TOPK_PRODUCTS} products & sampled paths for {len(user_topk_paths)} users")
 
 # ================================
 # 3. 构建测试规则分布 Qf(u) / Qw(u)
@@ -98,7 +95,7 @@ Qw_u = defaultdict(Counter)
 for uid, path_list in user_topk_paths.items():
     for item in path_list:
         path = item['path']
-        prob = item['prob']  # 可作为权重计算 Qw(u)
+        prob = item['prob']
         for rel, typ, idx in path:
             if rel in VALID_RELATIONS:
                 Qf_u[uid][rel] += 1          # 计数
@@ -134,14 +131,11 @@ for uid in train_users:
     Qf = np.array([Qf_u_norm[uid].get(r, 0) for r in rels])
     Qw = np.array([Qw_u_norm[uid].get(r, 0) for r in rels])
 
-    jsf = jensenshannon(P, Qf)**2
-    jsw = jensenshannon(P, Qw)**2
-    jsf_list.append(jsf)
-    jsw_list.append(jsw)
+    jsf_list.append(jensenshannon(P, Qf)**2)
+    jsw_list.append(jensenshannon(P, Qw)**2)
 
 JSf = np.mean(jsf_list)
 JSw = np.mean(jsw_list)
 
 print(f"JSf = {JSf:.6f}")
 print(f"JSw = {JSw:.6f}")
-
