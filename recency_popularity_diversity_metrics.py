@@ -8,9 +8,9 @@ from data_utils import AmazonDataset
 from knowledge_graph import KnowledgeGraph
 
 # ===== 配置 =====
-DATASET_NAME = 'Amazon_Clothing'  # 可改为其他数据集
+DATASET_NAME = 'Amazon_Beauty'  # 可改为其他数据集
 DATA_DIR = f'./data/{DATASET_NAME}'
-PATH_FILE = f'./tmp/{DATASET_NAME}/train_agent/policy_paths_epoch1.pkl'
+PATH_FILE = f'./tmp/{DATASET_NAME}/train_agent/policy_paths_epoch50.pkl'
 TIME_TRAIN_FILE = f'{DATA_DIR}/time_train.csv'
 TIME_TEST_FILE = f'{DATA_DIR}/time_test.csv'
 

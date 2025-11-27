@@ -1,134 +1,142 @@
 import os
-import gzip
 import pickle
 from collections import defaultdict, Counter
-import numpy as np
 from tqdm import tqdm
+import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from data_utils import AmazonDataset
-from itertools import islice
 
-# ===== 只需要改这一行 =====
-DATASET = "Amazon_Cellphones"   # 换数据集就改这一行即可
+# ================================
+# 配置
+# ================================
+DATASET = "Amazon_Beauty"
+DATA_DIR = f"./data/{DATASET}"
+PATH_FILE = f"./tmp/{DATASET}/train_agent/policy_paths_epoch50.pkl"
 
-# ===== 自动拼接路径 =====
-DATA_DIR  = f'./data/{DATASET}'
-PATH_FILE = f'./tmp/{DATASET}/train_agent/policy_paths_epoch1.pkl'
-
-# ===== 1️⃣ 加载 reasoning paths =====
-with open(PATH_FILE, 'rb') as f:
+# ================================
+# 1. 读取 reasoning paths
+# ================================
+with open(PATH_FILE, "rb") as f:
     data = pickle.load(f)
-print(f"[INFO] 已加载 {len(data['paths'])} 条 reasoning paths")
 
-# ===== 2️⃣ 提取每个用户的 Su 和推荐产品集合 =====
-user_explanations = defaultdict(set)  # Su
-user_products = defaultdict(list)     # 推荐产品集合，保留顺序和概率
+paths = data["paths"]
+probs = data["probs"]
+print(f"[INFO] Loaded {len(paths)} paths")
 
-for path, probs in zip(data['paths'], data['probs']):
-    user_id = None
-    last_product_id = None
+# ================================
+# 2. 构建 Su（解释词） & Top-10 推荐产品
+# ================================
+user_Su = defaultdict(set)
+user_prod_scores = defaultdict(lambda: defaultdict(float))
+
+for path, p_list in zip(paths, probs):
+    path_prob = float(np.prod(p_list))
+
+    uid = None
+    pid = None
     words = set()
-    path_prob = np.prod(probs)  # 可以用路径概率的乘积或平均作为该路径的综合概率
 
-    for rel, ent_type, ent_id in path:
-        if ent_type == 'user' and user_id is None:
-            user_id = ent_id
-        elif ent_type == 'product':
-            last_product_id = ent_id
-        elif ent_type == 'word':
-            words.add(ent_id)
+    for rel, typ, idx in path:
+        if typ == "user" and uid is None:
+            uid = idx
+        elif typ == "product":
+            pid = idx
+        elif typ == "word":
+            words.add(idx)
 
-    if user_id is not None:
-        user_explanations[user_id].update(words)
-        if last_product_id is not None:
-            user_products[user_id].append((last_product_id, path_prob))
+    if uid is None or pid is None:
+        continue
 
-# 对每个用户按概率排序，取 top-10 产品
-for uid in user_products:
-    sorted_products = sorted(user_products[uid], key=lambda x: x[1], reverse=True)
-    top_products = [pid for pid, _ in sorted_products[:10]]
-    user_products[uid] = top_products
+    # Su 收集全部 word 实体
+    user_Su[uid].update(words)
 
-# ===== 3️⃣ 加载真实评论数据 =====
-dataset = AmazonDataset(DATA_DIR, set_name='train')
-print(f"[INFO] 数据集中共有 {len(dataset.review.data)} 条评论")
+    # 每个产品累积路径概率
+    user_prod_scores[uid][pid] += path_prob
 
-# ===== 4️⃣ 构建 Gu（用户对推荐产品的真实评论词集合） =====
-user_groundtruth = defaultdict(set)
+# 取 top-10 产品
+user_top10 = {}
+for uid, score_dict in user_prod_scores.items():
+    sorted_p = sorted(score_dict.items(), key=lambda x: x[1], reverse=True)
+    user_top10[uid] = [pid for pid, s in sorted_p[:10]]
 
-for user_idx, product_idx, word_indices in dataset.review.data:
-    if product_idx in user_products[user_idx]:
-        user_groundtruth[user_idx].update(word_indices)
+print(f"[INFO] Top-10 product list generated for {len(user_top10)} users")
 
-print(f"[INFO] 构建了 {len(user_groundtruth)} 个用户的 Gu（初始真实评论词集合）")
+# ================================
+# 3. 加载真实评论（Gu 来源）
+# ================================
+dataset = AmazonDataset(DATA_DIR, set_name="train")
+reviews = dataset.review.data
+print(f"[INFO] Loaded {len(reviews)} reviews")
 
-# ===== 5️⃣ 统计全局词频 =====
-all_word_indices = [wid for words in user_groundtruth.values() for wid in words]
-word_freq = Counter(all_word_indices)
+# ================================
+# 4. 构建 Gu：用户对 top-10 产品的真实评论词
+# ================================
+user_Gu = defaultdict(set)
 
-# ===== 6️⃣ 计算 TF-IDF =====
-user_texts = []
-user_ids = []
-for uid, word_indices in user_groundtruth.items():
-    words = [dataset.word.vocab[w] for w in word_indices]
-    user_texts.append(" ".join(words))
-    user_ids.append(uid)
+for uid, pid, word_indices in reviews:
+    if uid in user_top10 and pid in user_top10[uid]:
+        user_Gu[uid].update(word_indices)
 
-vectorizer = TfidfVectorizer(token_pattern=r"(?u)\b\w+\b")
-tfidf_matrix = vectorizer.fit_transform(user_texts)
-feature_names = np.array(vectorizer.get_feature_names_out())
-avg_tfidf = np.asarray(tfidf_matrix.mean(axis=0)).ravel()
-word2tfidf = dict(zip(feature_names, avg_tfidf))
+print(f"[INFO] Built Gu for {len(user_Gu)} users")
 
-# ===== 7️⃣ 过滤高频低TF-IDF词 =====
-filtered_words = set()
-for wid, freq in word_freq.items():
-    if freq > 5000:
-        word = dataset.word.vocab[wid]
-        tfidf_val = word2tfidf.get(word, 0)
-        if tfidf_val < 0.1:
-            filtered_words.add(wid)
+# ================================
+# 5. 过滤 高频 & 低 TF-IDF 的词
+# ================================
+all_words = [w for ws in user_Gu.values() for w in ws]
+freq = Counter(all_words)
 
-# ===== 8️⃣ 更新 Gu =====
-for uid in user_groundtruth:
-    user_groundtruth[uid] = {w for w in user_groundtruth[uid] if w not in filtered_words}
+# 做 TF-IDF
+texts = []
+uids = []
+for uid, ws in user_Gu.items():
+    texts.append(" ".join(dataset.word.vocab[w] for w in ws))
+    uids.append(uid)
 
-print(f"[INFO] 过滤高频低TF-IDF词后，Gu 更新完成")
+tfidf = TfidfVectorizer(token_pattern=r"(?u)\b\w+\b")
+X = tfidf.fit_transform(texts)
+names = tfidf.get_feature_names_out()
+avg_tfidf = np.asarray(X.mean(axis=0)).ravel()
+word2tfidf = dict(zip(names, avg_tfidf))
 
-# ===== 9️⃣ 计算 Precision / Recall / F1 =====
-precisions, recalls, f1s = [], [], []
-printed = 0 
+# 找到要过滤的词
+remove_words = set()
+for w, f in freq.items():
+    if f > 5000:
+        word = dataset.word.vocab[w]
+        if word2tfidf.get(word, 1) < 0.1:
+            remove_words.add(w)
 
-for uid in tqdm(user_explanations.keys(), desc="Evaluating"):
-    Su = user_explanations[uid]
-    Gu = user_groundtruth.get(uid, set())
+# 更新 Gu
+for uid in user_Gu:
+    user_Gu[uid] = {w for w in user_Gu[uid] if w not in remove_words}
+
+print(f"[INFO] Gu filtering done.")
+
+# ================================
+# 6. 计算 Precision / Recall / F1
+# ================================
+pre_list, rec_list, f1_list = [], [], []
+
+for uid in tqdm(user_Su.keys(), desc="Evaluating"):
+    Su = user_Su[uid]
+    Gu = user_Gu.get(uid, set())
 
     if not Su or not Gu:
         continue
 
     inter = Su & Gu
+
     precision = len(inter) / (len(Su) + 1)
-    recall = len(inter) / (len(Gu) + 1)
-    f1 = 2 * precision * recall / (precision + recall + 1)
+    recall    = len(inter) / (len(Gu) + 1)
+    f1        = 2 * precision * recall / (precision + recall + 1)
 
-    precisions.append(precision)
-    recalls.append(recall)
-    f1s.append(f1)
+    pre_list.append(precision)
+    rec_list.append(recall)
+    f1_list.append(f1)
 
-    if printed < 2:
-        su_words = [dataset.word.vocab[w] for w in Su]
-        gu_words = [dataset.word.vocab[w] for w in Gu]
-        inter_words = [dataset.word.vocab[w] for w in inter]
-        print(f"\n用户 {uid}:")
-        print(f"  Su (预测词): {su_words[:10]}... 总数 {len(Su)}")
-        print(f"  Gu (真实词): {gu_words[:10]}... 总数 {len(Gu)}")
-        print(f"  交集: {inter_words[:10]}... 总数 {len(inter)}")
-        printed += 1
+print("\n===== Explainability Evaluation =====")
+print(f"Precision: {np.mean(pre_list):.4f}")
+print(f"Recall:    {np.mean(rec_list):.4f}")
+print(f"F1:        {np.mean(f1_list):.4f}")
 
-if precisions:
-    print("\n===== Evaluation Results =====")
-    print(f"平均 Precision: {np.mean(precisions):.4f}")
-    print(f"平均 Recall:    {np.mean(recalls):.4f}")
-    print(f"平均 F1:        {np.mean(f1s):.4f}")
-else:
-    print("[WARN] 没有匹配的用户用于计算。")
+
