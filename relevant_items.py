@@ -41,7 +41,7 @@ print(f"[INFO] Loaded {len(paths)} paths")
 # ================================
 # 3. 提取匹配真实购买的路径
 # ================================
-matched_paths = []  # [(uid, path, prob)]
+matched_paths = []  # [(path, prob)]
 
 for path, prob in zip(paths, probs):
     uid = None
@@ -54,7 +54,7 @@ for path, prob in zip(paths, probs):
 
     last_rel, last_typ, last_pid = path[-1]  # 路径最后一个 tuple
     if last_typ == "product" and last_pid in purchased[uid]:
-        matched_paths.append((uid, path, prob))
+        matched_paths.append((path, prob))  # 只保存 path 和 prob
 
 print(f"[INFO] Found {len(matched_paths)} paths corresponding to real purchases")
 
