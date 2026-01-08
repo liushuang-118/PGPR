@@ -163,7 +163,7 @@ print(f"✓ 三元组数量: {len(triples)}")
 
 with open(kg_rehashed_path, "w", encoding="utf-8") as f:
     for h, r, t in triples:
-        f.write(f"{h} {r} {t}\n")
+        f.write(f"{h}\t{r}\t{t}\n")  
 
 print("✓ kg_rehashed.txt 生成完成")
 print("✓ item_index2entity_id_rehashed.txt 生成完成")
