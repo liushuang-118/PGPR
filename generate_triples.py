@@ -43,10 +43,10 @@ for asin in all_products:
         item2id[asin] = current_id
         current_id += 1
 
-# 保存 item_index2entity_id_rehashed.txt
+# 保存 item_index2entity_id_rehashed.txt（用制表符）
 with open(item_mapping_path, "w", encoding="utf-8") as f:
     for asin, gid in item2id.items():
-        f.write(f"{asin} {gid}\n")
+        f.write(f"{asin}\t{gid}\n") 
 
 # ---------- 其他实体 ----------
 def assign_ids(lst, prefix):
