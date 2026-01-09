@@ -150,6 +150,10 @@ triples = []
 for head_type in kg.G:
     for head_id in kg.G[head_type]:
         for relation, tail_ids in kg.G[head_type][head_id].items():
+            # 跳过 relation 是 mentions 或 purchase
+            if relation.lower() in ("mentions", "purchase"):
+                continue
+
             if not isinstance(tail_ids, (list, tuple, set)):
                 tail_ids = [tail_ids]
             for tail_id in tail_ids:
@@ -159,13 +163,13 @@ for head_type in kg.G:
                 if h is not None and t is not None:
                     triples.append((h, relation, t))
 
-print(f"✓ 三元组数量: {len(triples)}")
+print(f"✓ 三元组数量（过滤 mentions/purchase 后）: {len(triples)}")
 
 with open(kg_rehashed_path, "w", encoding="utf-8") as f:
     for h, r, t in triples:
-        f.write(f"{h}\t{r}\t{t}\n")  
+        f.write(f"{h}\t{r}\t{t}\n")
 
-print("✓ kg_rehashed.txt 生成完成")
+print("✓ kg_rehashed.txt 已生成（已删除 mentions 和 purchase）")
 print("✓ item_index2entity_id_rehashed.txt 生成完成")
 print("✓ entity2global_id.txt 生成完成（最终版）")
 
@@ -174,16 +178,13 @@ print("✓ entity2global_id.txt 生成完成（最终版）")
 rating_csv_path = os.path.join(output_dir, "Rating.csv")
 raw_rating_path = r"D:\PGPR-RippleNet\data\Amazon_Beauty\All_Beauty.csv"
 
-# reviewerID → 行号
-user_value2index = {u: i for i, u in enumerate(users)}
-
 cnt_total = 0
 cnt_written = 0
 
 with open(raw_rating_path, "r", encoding="utf-8") as fin, \
      open(rating_csv_path, "w", encoding="utf-8") as fout:
 
-    # 固定表头（你要求的格式）
+    # 表头保持不变
     fout.write('"User-ID";"ISBN";"Book-Rating"\n')
 
     for line in fin:
@@ -198,21 +199,10 @@ with open(raw_rating_path, "r", encoding="utf-8") as fin, \
 
         asin, reviewer_id, rating, _ = parts
 
-        # reviewerID → user 行号
-        if reviewer_id not in user_value2index:
-            continue
-
-        user_orig_id = user_value2index[reviewer_id]
-        user_global_id = entity2id.get(f"user:{user_orig_id}")
-
-        if user_global_id is None:
-            continue
-
-        # 写入一行
-        fout.write(f'"{user_global_id}";"{asin}";"{rating}"\n')
+        # 直接写入原始用户 ID，不做映射
+        fout.write(f'"{reviewer_id}";"{asin}";"{rating}"\n')
         cnt_written += 1
 
 print(f"Rating.csv 生成完成: {rating_csv_path}")
 print(f"原始评分行数: {cnt_total}")
 print(f"成功写入行数: {cnt_written}")
-
