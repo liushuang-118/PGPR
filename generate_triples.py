@@ -174,35 +174,35 @@ print("✓ item_index2entity_id_rehashed.txt 生成完成")
 print("✓ entity2global_id.txt 生成完成（最终版）")
 
 
-# ---------------- 9. 生成 Rating.csv ----------------
-rating_csv_path = os.path.join(output_dir, "Rating.csv")
-raw_rating_path = r"D:\PGPR-RippleNet\data\Amazon_Beauty\All_Beauty.csv"
+# # ---------------- 9. 生成 Rating.csv ----------------
+# rating_csv_path = os.path.join(output_dir, "Rating.csv")
+# raw_rating_path = r"D:\PGPR-RippleNet\data\Amazon_Beauty\All_Beauty.csv"
 
-cnt_total = 0
-cnt_written = 0
+# cnt_total = 0
+# cnt_written = 0
 
-with open(raw_rating_path, "r", encoding="utf-8") as fin, \
-     open(rating_csv_path, "w", encoding="utf-8") as fout:
+# with open(raw_rating_path, "r", encoding="utf-8") as fin, \
+#      open(rating_csv_path, "w", encoding="utf-8") as fout:
 
-    # 表头保持不变
-    fout.write('"User-ID";"ISBN";"Book-Rating"\n')
+#     # 表头保持不变
+#     fout.write('"User-ID";"ISBN";"Book-Rating"\n')
 
-    for line in fin:
-        cnt_total += 1
-        line = line.strip()
-        if not line:
-            continue
+#     for line in fin:
+#         cnt_total += 1
+#         line = line.strip()
+#         if not line:
+#             continue
 
-        parts = line.split(",")
-        if len(parts) != 4:
-            continue
+#         parts = line.split(",")
+#         if len(parts) != 4:
+#             continue
 
-        asin, reviewer_id, rating, _ = parts
+#         asin, reviewer_id, rating, _ = parts
 
-        # 直接写入原始用户 ID，不做映射
-        fout.write(f'"{reviewer_id}";"{asin}";"{rating}"\n')
-        cnt_written += 1
+#         # 直接写入原始用户 ID，不做映射
+#         fout.write(f'"{reviewer_id}";"{asin}";"{rating}"\n')
+#         cnt_written += 1
 
-print(f"Rating.csv 生成完成: {rating_csv_path}")
-print(f"原始评分行数: {cnt_total}")
-print(f"成功写入行数: {cnt_written}")
+# print(f"Rating.csv 生成完成: {rating_csv_path}")
+# print(f"原始评分行数: {cnt_total}")
+# print(f"成功写入行数: {cnt_written}")
