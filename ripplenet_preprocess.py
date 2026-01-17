@@ -3,9 +3,9 @@ import gzip
 import csv
 
 # ---------------- 配置 ----------------
-data_dir = r"D:\PGPR-RippleNet\data\Amazon_Beauty\ripplenet_data"
-train_path = r"D:\PGPR-RippleNet\data\Amazon_Beauty\train.txt.gz"
-test_path = r"D:\PGPR-RippleNet\data\Amazon_Beauty\test.txt.gz"
+data_dir = r"D:\PGPR-RippleNet\data\Amazon_Clothing\ripplenet_data"
+train_path = r"D:\PGPR-RippleNet\data\Amazon_Clothing\train.txt.gz"
+test_path = r"D:\PGPR-RippleNet\data\Amazon_Clothing\test.txt.gz"
 entity2global_path = os.path.join(data_dir, "entity2global_id.txt")
 output_path = os.path.join(data_dir, "ratings_final.csv")
 

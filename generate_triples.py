@@ -4,8 +4,8 @@ import pickle
 import csv
 
 # ---------------- 配置 ----------------
-pgpr_data_dir = r"D:\PGPR-RippleNet\data\Amazon_Beauty"
-kg_pkl_path = r"D:\PGPR-RippleNet\tmp\Amazon_Beauty\kg.pkl"
+pgpr_data_dir = r"D:\PGPR-RippleNet\data\Amazon_Clothing"
+kg_pkl_path = r"D:\PGPR-RippleNet\tmp\Amazon_Clothing\kg.pkl"
 output_dir = os.path.join(pgpr_data_dir, "ripplenet_data")
 os.makedirs(output_dir, exist_ok=True)
 

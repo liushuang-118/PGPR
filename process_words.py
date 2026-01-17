@@ -3,7 +3,7 @@ import gzip
 import csv
 
 # ---------------- 配置 ----------------
-pgpr_data_dir = r"D:\PGPR-RippleNet\data\Amazon_Beauty"
+pgpr_data_dir = r"D:\PGPR-RippleNet\data\Amazon_Clothing"
 output_file = os.path.join(pgpr_data_dir, "ripplenet_data", "train_test_global.txt.gz")
 train_file = os.path.join(pgpr_data_dir, "train.txt.gz")
 test_file = os.path.join(pgpr_data_dir, "test.txt.gz")

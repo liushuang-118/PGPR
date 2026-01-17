@@ -2,10 +2,10 @@ import os
 import pandas as pd
 
 # ---------------- 配置 ----------------
-train_path = r"D:\Thesis_Project\Models\RippleNet\data\book\time_train.csv"
-test_path = r"D:\PGPR-RippleNet\data\Amazon_Beauty\time_test.csv"
-entity2global_path = r"D:\PGPR-RippleNet\data\Amazon_Beauty\ripplenet_data\entity2global_id.txt"
-output_path = r"D:\PGPR-RippleNet\data\Amazon_Beauty\ripplenet_data\time_all_global.csv"
+train_path = r"D:\PGPR-RippleNet\data\Amazon_Clothing\time_train.csv"
+test_path = r"D:\PGPR-RippleNet\data\Amazon_Clothing\time_test.csv"
+entity2global_path = r"D:\PGPR-RippleNet\data\Amazon_Clothing\ripplenet_data\entity2global_id.txt"
+output_path = r"D:\PGPR-RippleNet\data\Amazon_Clothing\ripplenet_data\time_all_global.csv"
 
 # ---------------- 1. 读取 UID → global_id 映射 ----------------
 print("读取 entity2global_id.txt 构建 UID 映射...")
